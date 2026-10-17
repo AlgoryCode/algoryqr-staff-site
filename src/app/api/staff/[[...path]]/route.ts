@@ -1,15 +1,20 @@
 import { NextResponse } from "next/server";
 
 import { handleStaffAuth } from "@/lib/server/staff-auth";
+import { proxyWaiterAuthenticatedRequest } from "@/lib/server/waiter-authenticated-proxy";
 
 type RouteContext = { params: Promise<{ path?: string[] }> };
 type ProxyMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 async function proxy(request: Request, method: ProxyMethod, context: RouteContext) {
   const path = (await context.params).path ?? [];
-  const authResponse = await handleStaffAuth(request, method, path.join("/"));
+  const key = path.join("/");
+  const authResponse = await handleStaffAuth(request, method, key);
   if (authResponse) return authResponse;
-  return NextResponse.json({ message: "Not found" }, { status: 404 });
+  if (path.length === 0) {
+    return NextResponse.json({ message: "Not found" }, { status: 404 });
+  }
+  return proxyWaiterAuthenticatedRequest(request, `/staff/${key}`, method);
 }
 
 export async function GET(request: Request, context: RouteContext) {

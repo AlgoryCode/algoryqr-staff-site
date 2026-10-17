@@ -25,7 +25,14 @@ function resolveApiBaseUrl(): string {
     if (appUrl) {
       const host = new URL(appUrl).hostname.toLowerCase();
       if (host.includes("stage.")) return STAGE_API_BASE;
-      if (host.includes("prod.") || host === "qr.algorycode.com") return PROD_API_BASE;
+      if (
+        host.includes("prod.") ||
+        host === "qr.algorycode.com" ||
+        host === "staff.algorycode.com" ||
+        host.endsWith(".algorycode.com")
+      ) {
+        return PROD_API_BASE;
+      }
     }
   } catch {
     // ignore
@@ -36,12 +43,9 @@ function resolveApiBaseUrl(): string {
   throw new Error("API_BASE_URL is required");
 }
 
-const STAGE_AUTH_BASE = "https://stage.auth.algorycode.com";
-const PROD_AUTH_BASE = "https://prod.auth.algorycode.com";
-const LOCAL_AUTH_BASE = "http://localhost:8080";
-
 const AUTH_ROUTES = {
   login: "/api/v1/auth/login",
+  staffLogin: "/api/v1/auth/staff/login",
   register: "/api/v1/auth/register",
   demoLogin: "/api/v1/auth/demo/login",
   demoRegister: "/api/v1/auth/demo/register",
@@ -60,16 +64,7 @@ export type AuthRoute = keyof typeof AUTH_ROUTES;
 function resolveAuthBaseUrl(): string {
   const explicit = readRuntimeEnv("AUTH_BASE_URL");
   if (explicit) return explicit;
-  const apiBase = resolveApiBaseUrl();
-  if (!apiBase) return "";
-  try {
-    const host = new URL(apiBase).hostname.toLowerCase();
-    if (host.startsWith("stage.")) return STAGE_AUTH_BASE;
-    if (host.startsWith("prod.")) return PROD_AUTH_BASE;
-  } catch {
-    return LOCAL_AUTH_BASE;
-  }
-  return LOCAL_AUTH_BASE;
+  return resolveApiBaseUrl();
 }
 
 function resolvePublicApiBaseUrl(): string {

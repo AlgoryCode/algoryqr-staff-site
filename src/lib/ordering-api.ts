@@ -314,7 +314,7 @@ export async function getCustomerOrder(orderId: number | string): Promise<OrderR
 }
 
 export async function listMenuTables(menuId: number): Promise<RestaurantTable[]> {
-  const response = await fetch(`/api/waiter-panel/menu/${menuId}/tables`, {
+  const response = await fetch(`/api/staff/panel/menu/${menuId}/tables`, {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -331,7 +331,7 @@ export async function listMenuTables(menuId: number): Promise<RestaurantTable[]>
 }
 
 export async function listMenuAreas(menuId: number): Promise<RestaurantArea[]> {
-  const response = await fetch(`/api/waiter-panel/menu/${menuId}/areas`, {
+  const response = await fetch(`/api/staff/panel/menu/${menuId}/areas`, {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -348,7 +348,7 @@ export async function listMenuAreas(menuId: number): Promise<RestaurantArea[]> {
 }
 
 export async function createMenuArea(menuId: number, name: string): Promise<RestaurantArea> {
-  const response = await fetch(`/api/waiter-panel/menu/${menuId}/areas`, {
+  const response = await fetch(`/api/staff/panel/menu/${menuId}/areas`, {
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     credentials: "same-origin",
@@ -366,7 +366,7 @@ export async function updateMenuArea(
   areaId: number,
   payload: { name: string },
 ): Promise<RestaurantArea> {
-  const response = await fetch(`/api/waiter-panel/menu/${menuId}/areas/${areaId}`, {
+  const response = await fetch(`/api/staff/panel/menu/${menuId}/areas/${areaId}`, {
     method: "PATCH",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     credentials: "same-origin",
@@ -380,7 +380,7 @@ export async function updateMenuArea(
 }
 
 export async function deleteMenuArea(menuId: number, areaId: number): Promise<void> {
-  const response = await fetch(`/api/waiter-panel/menu/${menuId}/areas/${areaId}`, {
+  const response = await fetch(`/api/staff/panel/menu/${menuId}/areas/${areaId}`, {
     method: "DELETE",
     credentials: "same-origin",
   });
@@ -415,7 +415,7 @@ export async function createMenuTable(
     layoutShape?: string | null;
   },
 ): Promise<RestaurantTable> {
-  const response = await fetch(`/api/waiter-panel/menu/${menuId}/tables`, {
+  const response = await fetch(`/api/staff/panel/menu/${menuId}/tables`, {
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     credentials: "same-origin",
@@ -433,7 +433,7 @@ export async function updateMenuTable(
   tableId: number,
   payload: MenuTablePayload,
 ): Promise<RestaurantTable> {
-  const response = await fetch(`/api/waiter-panel/menu/${menuId}/tables/${tableId}`, {
+  const response = await fetch(`/api/staff/panel/menu/${menuId}/tables/${tableId}`, {
     method: "PATCH",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     credentials: "same-origin",
@@ -450,7 +450,7 @@ export async function regenerateMenuTableQr(
   menuId: number,
   tableId: number,
 ): Promise<RestaurantTable> {
-  const response = await fetch(`/api/waiter-panel/menu/${menuId}/tables/${tableId}/regenerate-qr`, {
+  const response = await fetch(`/api/staff/panel/menu/${menuId}/tables/${tableId}/regenerate-qr`, {
     method: "POST",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -473,7 +473,7 @@ export type CatalogLayout = {
 };
 
 export async function listCatalogLayouts(): Promise<CatalogLayout[]> {
-  const response = await fetch("/api/waiter-panel/catalog/layouts", {
+  const response = await fetch("/api/staff/panel/catalog/layouts", {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -490,7 +490,7 @@ export async function listCatalogLayouts(): Promise<CatalogLayout[]> {
 }
 
 export async function createCatalogLayout(name: string): Promise<CatalogLayout> {
-  const response = await fetch("/api/waiter-panel/catalog/layouts", {
+  const response = await fetch("/api/staff/panel/catalog/layouts", {
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     credentials: "same-origin",
@@ -507,7 +507,7 @@ export async function updateCatalogLayout(
   layoutId: number,
   payload: { name: string },
 ): Promise<CatalogLayout> {
-  const response = await fetch(`/api/waiter-panel/catalog/layouts/${layoutId}`, {
+  const response = await fetch(`/api/staff/panel/catalog/layouts/${layoutId}`, {
     method: "PATCH",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     credentials: "same-origin",
@@ -521,7 +521,7 @@ export async function updateCatalogLayout(
 }
 
 export async function deleteCatalogLayout(layoutId: number): Promise<void> {
-  const response = await fetch(`/api/waiter-panel/catalog/layouts/${layoutId}`, {
+  const response = await fetch(`/api/staff/panel/catalog/layouts/${layoutId}`, {
     method: "DELETE",
     credentials: "same-origin",
   });
@@ -535,7 +535,7 @@ export async function assignCatalogLayout(
   layoutId: number,
   branchId: number | null,
 ): Promise<CatalogLayout> {
-  const response = await fetch(`/api/waiter-panel/catalog/layouts/${layoutId}/assign`, {
+  const response = await fetch(`/api/staff/panel/catalog/layouts/${layoutId}/assign`, {
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     credentials: "same-origin",
@@ -549,7 +549,7 @@ export async function assignCatalogLayout(
 }
 
 export async function listCatalogAreas(layoutId: number): Promise<RestaurantArea[]> {
-  const response = await fetch(`/api/waiter-panel/catalog/layouts/${layoutId}/areas`, {
+  const response = await fetch(`/api/staff/panel/catalog/layouts/${layoutId}/areas`, {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -566,7 +566,7 @@ export async function listCatalogAreas(layoutId: number): Promise<RestaurantArea
 }
 
 export async function createCatalogArea(layoutId: number, name: string): Promise<RestaurantArea> {
-  const response = await fetch(`/api/waiter-panel/catalog/layouts/${layoutId}/areas`, {
+  const response = await fetch(`/api/staff/panel/catalog/layouts/${layoutId}/areas`, {
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     credentials: "same-origin",
@@ -584,7 +584,7 @@ export async function updateCatalogArea(
   areaId: number,
   payload: { name: string },
 ): Promise<RestaurantArea> {
-  const response = await fetch(`/api/waiter-panel/catalog/layouts/${layoutId}/areas/${areaId}`, {
+  const response = await fetch(`/api/staff/panel/catalog/layouts/${layoutId}/areas/${areaId}`, {
     method: "PATCH",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     credentials: "same-origin",
@@ -598,7 +598,7 @@ export async function updateCatalogArea(
 }
 
 export async function deleteCatalogArea(layoutId: number, areaId: number): Promise<void> {
-  const response = await fetch(`/api/waiter-panel/catalog/layouts/${layoutId}/areas/${areaId}`, {
+  const response = await fetch(`/api/staff/panel/catalog/layouts/${layoutId}/areas/${areaId}`, {
     method: "DELETE",
     credentials: "same-origin",
   });
@@ -609,7 +609,7 @@ export async function deleteCatalogArea(layoutId: number, areaId: number): Promi
 }
 
 export async function listCatalogTables(layoutId: number): Promise<RestaurantTable[]> {
-  const response = await fetch(`/api/waiter-panel/catalog/layouts/${layoutId}/tables`, {
+  const response = await fetch(`/api/staff/panel/catalog/layouts/${layoutId}/tables`, {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -638,7 +638,7 @@ export async function createCatalogTable(
     layoutShape?: string | null;
   },
 ): Promise<RestaurantTable> {
-  const response = await fetch(`/api/waiter-panel/catalog/layouts/${layoutId}/tables`, {
+  const response = await fetch(`/api/staff/panel/catalog/layouts/${layoutId}/tables`, {
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     credentials: "same-origin",
@@ -656,7 +656,7 @@ export async function updateCatalogTable(
   tableId: number,
   payload: MenuTablePayload,
 ): Promise<RestaurantTable> {
-  const response = await fetch(`/api/waiter-panel/catalog/layouts/${layoutId}/tables/${tableId}`, {
+  const response = await fetch(`/api/staff/panel/catalog/layouts/${layoutId}/tables/${tableId}`, {
     method: "PATCH",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     credentials: "same-origin",
@@ -674,7 +674,7 @@ export async function regenerateCatalogTableQr(
   tableId: number,
 ): Promise<RestaurantTable> {
   const response = await fetch(
-    `/api/waiter-panel/catalog/layouts/${layoutId}/tables/${tableId}/regenerate-qr`,
+    `/api/staff/panel/catalog/layouts/${layoutId}/tables/${tableId}/regenerate-qr`,
     {
       method: "POST",
       headers: { Accept: "application/json" },
@@ -689,7 +689,7 @@ export async function regenerateCatalogTableQr(
 }
 
 export async function deleteCatalogTable(layoutId: number, tableId: number): Promise<void> {
-  const response = await fetch(`/api/waiter-panel/catalog/layouts/${layoutId}/tables/${tableId}`, {
+  const response = await fetch(`/api/staff/panel/catalog/layouts/${layoutId}/tables/${tableId}`, {
     method: "DELETE",
     credentials: "same-origin",
   });
@@ -700,7 +700,7 @@ export async function deleteCatalogTable(layoutId: number, tableId: number): Pro
 }
 
 export async function deleteMenuTable(menuId: number, tableId: number): Promise<void> {
-  const response = await fetch(`/api/waiter-panel/menu/${menuId}/tables/${tableId}`, {
+  const response = await fetch(`/api/staff/panel/menu/${menuId}/tables/${tableId}`, {
     method: "DELETE",
     credentials: "same-origin",
   });
@@ -715,7 +715,7 @@ export async function listMerchantOrders(
   status = "ALL",
 ): Promise<OrderResponse[]> {
   const params = new URLSearchParams({ status });
-  const response = await fetch(`/api/waiter-panel/menu/${menuId}/orders?${params}`, {
+  const response = await fetch(`/api/staff/panel/menu/${menuId}/orders?${params}`, {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -732,7 +732,7 @@ export async function listMerchantOrders(
 }
 
 export async function listMerchantKitchenQueue(menuId: number): Promise<OrderResponse[]> {
-  const response = await fetch(`/api/waiter-panel/menu/${menuId}/kitchen/orders`, {
+  const response = await fetch(`/api/staff/panel/menu/${menuId}/kitchen/orders`, {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -756,7 +756,7 @@ async function merchantKitchenTransition(
   orderSource?: string | null,
 ): Promise<OrderResponse> {
   const params = kitchenSourceQuery(orderSource);
-  const response = await fetch(`/api/waiter-panel/menu/${menuId}/orders/${orderId}/${action}${params}`, {
+  const response = await fetch(`/api/staff/panel/menu/${menuId}/orders/${orderId}/${action}${params}`, {
     method: "POST",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -797,7 +797,7 @@ export async function revertMerchantKitchenOrder(
 ): Promise<OrderResponse> {
   const params = new URLSearchParams({ to });
   if (orderSource) params.set("source", orderSource);
-  const response = await fetch(`/api/waiter-panel/menu/${menuId}/orders/${orderId}/kitchen-revert?${params}`, {
+  const response = await fetch(`/api/staff/panel/menu/${menuId}/orders/${orderId}/kitchen-revert?${params}`, {
     method: "POST",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -822,7 +822,7 @@ export async function updateMerchantKitchenNote(
   orderId: number,
   note: string,
 ): Promise<OrderResponse> {
-  const response = await fetch(`/api/waiter-panel/menu/${menuId}/orders/${orderId}/kitchen-note`, {
+  const response = await fetch(`/api/staff/panel/menu/${menuId}/orders/${orderId}/kitchen-note`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",
@@ -839,7 +839,7 @@ export async function getMerchantOrder(
   menuId: number,
   orderId: number,
 ): Promise<OrderResponse> {
-  const response = await fetch(`/api/waiter-panel/menu/${menuId}/orders/${orderId}`, {
+  const response = await fetch(`/api/staff/panel/menu/${menuId}/orders/${orderId}`, {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -856,7 +856,7 @@ export async function cancelMerchantOrder(
   orderId: number,
   request?: OrderCancelRequest,
 ): Promise<OrderResponse> {
-  const response = await fetch(`/api/waiter-panel/menu/${menuId}/orders/${orderId}/cancel`, {
+  const response = await fetch(`/api/staff/panel/menu/${menuId}/orders/${orderId}/cancel`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",

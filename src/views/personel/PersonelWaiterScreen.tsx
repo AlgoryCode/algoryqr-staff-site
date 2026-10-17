@@ -133,11 +133,13 @@ export function PersonelWaiterScreen({ me }: { me: WaiterMe }) {
 
   const pendingQuery = useQuery({
     queryKey: ["staff-waiter-pending"],
+    enabled: !kitchenEnabled,
     queryFn: listWaiterPendingOrders,
     refetchInterval: 6_000,
   });
   const readyQuery = useQuery({
     queryKey: ["staff-waiter-ready"],
+    enabled: !kitchenEnabled,
     queryFn: listWaiterReadyOrders,
     refetchInterval: 6_000,
   });
@@ -164,6 +166,7 @@ export function PersonelWaiterScreen({ me }: { me: WaiterMe }) {
   });
   const tablesQuery = useQuery({
     queryKey: ["staff-waiter-tables"],
+    enabled: !kitchenEnabled,
     queryFn: listWaiterTables,
     refetchInterval: 6_000,
   });

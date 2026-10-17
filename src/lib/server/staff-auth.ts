@@ -96,8 +96,8 @@ async function handleLogin(request: Request) {
 
   try {
     const upstream = await axios.post<Record<string, unknown>>(
-      authUrl("login"),
-      { identifier: username, password, merchantId },
+      authUrl("staffLogin"),
+      { merchantId, username, password },
       {
         headers: {
           Accept: "application/json",
@@ -133,7 +133,13 @@ async function handleLogin(request: Request) {
     const staff = profileFromAccess(accessBody);
     const app = appForStaffRole(staff.staffRole);
     const response = NextResponse.json(publicStaffProfile(staff));
-    setStaffAuthCookies(response, app, accessToken, refreshToken, staffIdFrom(data));
+    setStaffAuthCookies(
+      response,
+      app,
+      accessToken,
+      refreshToken,
+      staffIdFrom(staff) ?? staffIdFrom(data),
+    );
     return response;
   } catch (error) {
     return upstreamError(error);

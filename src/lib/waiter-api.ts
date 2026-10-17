@@ -13,51 +13,7 @@ import {
 import { asCourierTickets, type CourierTicket } from "@/lib/store-courier";
 import { asKitchenTickets, type KitchenCourierOption } from "@/lib/store-kitchen";
 
-export type MenuOwnerSummary = {
-  id: number;
-  firstName?: string | null;
-  lastName?: string | null;
-  email?: string | null;
-};
-
 export type StaffRole = "WAITER" | "KITCHEN" | "COURIER";
-
-export type MenuWaiterMember = {
-  id: number;
-  branchId?: number | null;
-  username: string;
-  displayName: string;
-  staffRole?: StaffRole | null;
-  active: boolean;
-  commissionEnabled?: boolean;
-  commissionType?: "PERCENT" | "FIXED" | null;
-  commissionScope?: "PER_ITEM" | "BILL_TOTAL" | null;
-  commissionValue?: number | string | null;
-  createdAt?: string | null;
-};
-
-export type MenuUsersResponse = {
-  owner?: MenuOwnerSummary | null;
-  waiters: MenuWaiterMember[];
-};
-
-export type MerchantStaffListResponse = {
-  staff?: MenuWaiterMember[] | null;
-  waiters?: MenuWaiterMember[] | null;
-};
-
-export type MenuCustomerItem = {
-  customerId: number;
-  menuId?: number | null;
-  businessId?: number | null;
-  menuName?: string | null;
-  menuDeleted?: boolean | null;
-  firstName?: string | null;
-  lastName?: string | null;
-  email?: string | null;
-  joinedAt?: string | null;
-  memberSince?: string | null;
-};
 
 export type WaiterAuthResult = {
   accessToken?: string;
@@ -372,197 +328,6 @@ function messageFromUnknown(data: unknown, fallback: string): string {
   return fallback;
 }
 
-/* ── Merchant: waiters & customers ── */
-
-export const MERCHANT_STAFF_QUERY_KEY = ["merchant-staff"] as const;
-
-function normalizeStaffMember(member: MenuWaiterMember): MenuWaiterMember {
-  const branchId =
-    typeof member.branchId === "number" && Number.isFinite(member.branchId) && member.branchId > 0
-      ? member.branchId
-      : null;
-  return {
-    ...member,
-    branchId,
-    staffRole: parseStaffRole(member.staffRole),
-  };
-}
-
-function normalizeUsersResponse(data: MenuUsersResponse): MenuUsersResponse {
-  return {
-    owner: data.owner ?? null,
-    waiters: Array.isArray(data.waiters) ? data.waiters.map(normalizeStaffMember) : [],
-  };
-}
-
-export async function listMerchantStaff(): Promise<MenuWaiterMember[]> {
-  const response = await waiterFetch("/api/waiter-panel/staff", {
-    method: "GET",
-    headers: { Accept: "application/json" },
-    credentials: "same-origin",
-  });
-  const data = await parseJson<MerchantStaffListResponse & { message?: string }>(response);
-  if (!response.ok) {
-    throw new WaiterApiError(response.status, data.message || "Personel alınamadı");
-  }
-  const rows = Array.isArray(data.staff) ? data.staff : Array.isArray(data.waiters) ? data.waiters : [];
-  return rows.map(normalizeStaffMember);
-}
-
-export async function createMerchantStaff(payload: {
-  username: string;
-  password: string;
-  displayName: string;
-  staffRole?: StaffRole;
-}): Promise<MenuWaiterMember> {
-  const response = await waiterFetch("/api/waiter-panel/staff", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    credentials: "same-origin",
-    body: JSON.stringify(payload),
-  });
-  const data = await parseJson<MenuWaiterMember & { message?: string }>(response);
-  if (!response.ok) {
-    throw new WaiterApiError(response.status, data.message || "Personel eklenemedi");
-  }
-  return normalizeStaffMember(data);
-}
-
-export async function assignMerchantStaffBranch(
-  staffId: number,
-  branchId: number | null,
-): Promise<MenuWaiterMember> {
-  const response = await waiterFetch(`/api/waiter-panel/staff/${staffId}/branch`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    credentials: "same-origin",
-    body: JSON.stringify({ branchId }),
-  });
-  const data = await parseJson<MenuWaiterMember & { message?: string }>(response);
-  if (!response.ok) {
-    throw new WaiterApiError(response.status, data.message || "Şube ataması yapılamadı");
-  }
-  return normalizeStaffMember(data);
-}
-
-export async function updateMerchantStaff(
-  staffId: number,
-  payload: {
-    displayName?: string;
-    active?: boolean;
-    password?: string;
-    commissionEnabled?: boolean;
-    commissionType?: "PERCENT" | "FIXED";
-    commissionScope?: "PER_ITEM" | "BILL_TOTAL";
-    commissionValue?: number;
-  },
-): Promise<MenuWaiterMember> {
-  const response = await waiterFetch(`/api/waiter-panel/staff/${staffId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    credentials: "same-origin",
-    body: JSON.stringify(payload),
-  });
-  const data = await parseJson<MenuWaiterMember & { message?: string }>(response);
-  if (!response.ok) {
-    throw new WaiterApiError(response.status, data.message || "Personel güncellenemedi");
-  }
-  return normalizeStaffMember(data);
-}
-
-export async function listMenuUsers(branchId: number): Promise<MenuUsersResponse> {
-  const response = await waiterFetch(`/api/waiter-panel/branch/${branchId}/staff`, {
-    method: "GET",
-    headers: { Accept: "application/json" },
-    credentials: "same-origin",
-  });
-  const data = await parseJson<MenuUsersResponse & { message?: string }>(response);
-  if (!response.ok) {
-    throw new WaiterApiError(response.status, data.message || "Personeller alınamadı");
-  }
-  return normalizeUsersResponse(data);
-}
-
-export async function createMenuWaiter(
-  branchId: number,
-  payload: { username: string; password: string; displayName: string; staffRole?: StaffRole },
-): Promise<MenuWaiterMember> {
-  const response = await waiterFetch(`/api/waiter-panel/branch/${branchId}/staff`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    credentials: "same-origin",
-    body: JSON.stringify(payload),
-  });
-  const data = await parseJson<MenuWaiterMember & { message?: string }>(response);
-  if (!response.ok) {
-    throw new WaiterApiError(response.status, data.message || "Kullanıcı eklenemedi");
-  }
-  return normalizeStaffMember(data);
-}
-
-export async function updateMenuWaiter(
-  branchId: number,
-  waiterId: number,
-  payload: {
-    displayName?: string;
-    active?: boolean;
-    password?: string;
-    commissionEnabled?: boolean;
-    commissionType?: "PERCENT" | "FIXED";
-    commissionScope?: "PER_ITEM" | "BILL_TOTAL";
-    commissionValue?: number;
-  },
-): Promise<MenuWaiterMember> {
-  const response = await waiterFetch(`/api/waiter-panel/branch/${branchId}/staff/${waiterId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    credentials: "same-origin",
-    body: JSON.stringify(payload),
-  });
-  const data = await parseJson<MenuWaiterMember & { message?: string }>(response);
-  if (!response.ok) {
-    throw new WaiterApiError(response.status, data.message || "Kullanıcı güncellenemedi");
-  }
-  return data;
-}
-
-export async function deleteMenuWaiter(branchId: number, waiterId: number): Promise<void> {
-  const response = await waiterFetch(`/api/waiter-panel/branch/${branchId}/staff/${waiterId}`, {
-    method: "DELETE",
-    credentials: "same-origin",
-  });
-  if (!response.ok && response.status !== 204) {
-    const data = await parseJson<{ message?: string }>(response);
-    throw new WaiterApiError(response.status, data.message || "Kullanıcı silinemedi");
-  }
-}
-
-export async function listMenuCustomers(menuId: number): Promise<MenuCustomerItem[]> {
-  const response = await waiterFetch(`/api/waiter-panel/menu/${menuId}/customers`, {
-    method: "GET",
-    headers: { Accept: "application/json" },
-    credentials: "same-origin",
-  });
-  const data = await parseJson<MenuCustomerItem[] | { message?: string }>(response);
-  if (!response.ok) {
-    throw new WaiterApiError(response.status, messageFromUnknown(data, "Müşteriler alınamadı"));
-  }
-  return Array.isArray(data) ? data : [];
-}
-
-export async function listBusinessCustomers(): Promise<MenuCustomerItem[]> {
-  const response = await waiterFetch("/api/waiter-panel/customers/my", {
-    method: "GET",
-    headers: { Accept: "application/json" },
-    credentials: "same-origin",
-  });
-  const data = await parseJson<MenuCustomerItem[] | { message?: string }>(response);
-  if (!response.ok) {
-    throw new WaiterApiError(response.status, messageFromUnknown(data, "Müşteriler alınamadı"));
-  }
-  return Array.isArray(data) ? data : [];
-}
-
 /* ── Waiter auth ── */
 
 export async function waiterLogin(payload: {
@@ -618,7 +383,7 @@ export async function waiterMe(): Promise<WaiterMe | null> {
 /* ── Waiter orders ── */
 
 export async function listWaiterPendingOrders(): Promise<OrderResponse[]> {
-  const response = await waiterFetch("/api/waiter/orders/pending", {
+  const response = await waiterFetch("/api/staff/orders/pending", {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -631,7 +396,7 @@ export async function listWaiterPendingOrders(): Promise<OrderResponse[]> {
 }
 
 export async function listWaiterTodayOrders(): Promise<OrderResponse[]> {
-  const response = await waiterFetch("/api/waiter/orders/today", {
+  const response = await waiterFetch("/api/staff/orders/today", {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -644,7 +409,7 @@ export async function listWaiterTodayOrders(): Promise<OrderResponse[]> {
 }
 
 export async function listWaiterTables(): Promise<WaiterTableSummary[]> {
-  const response = await waiterFetch("/api/waiter/orders/tables", {
+  const response = await waiterFetch("/api/staff/orders/tables", {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -657,7 +422,7 @@ export async function listWaiterTables(): Promise<WaiterTableSummary[]> {
 }
 
 export async function listWaiterTableTodayOrders(tableId: number): Promise<OrderResponse[]> {
-  const response = await waiterFetch(`/api/waiter/orders/tables/${tableId}/today`, {
+  const response = await waiterFetch(`/api/staff/orders/tables/${tableId}/today`, {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -670,7 +435,7 @@ export async function listWaiterTableTodayOrders(tableId: number): Promise<Order
 }
 
 export async function confirmWaiterOrder(orderId: number, _kitchenEnabled = true): Promise<OrderResponse> {
-  const response = await waiterFetch(`/api/waiter/orders/${orderId}/confirm`, {
+  const response = await waiterFetch(`/api/staff/orders/${orderId}/confirm`, {
     method: "POST",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -687,7 +452,7 @@ export async function rejectWaiterOrder(
   orderId: number,
   request?: OrderCancelRequest,
 ): Promise<OrderResponse> {
-  const response = await waiterFetch(`/api/waiter/orders/${orderId}/reject`, {
+  const response = await waiterFetch(`/api/staff/orders/${orderId}/reject`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",
@@ -705,7 +470,7 @@ export async function cancelWaiterOrder(
   orderId: number,
   request?: OrderCancelRequest,
 ): Promise<OrderResponse> {
-  const response = await waiterFetch(`/api/waiter/orders/${orderId}/cancel`, {
+  const response = await waiterFetch(`/api/staff/orders/${orderId}/cancel`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",
@@ -725,7 +490,7 @@ export async function cancelKitchenOrder(
   orderSource?: string | null,
 ): Promise<OrderResponse> {
   const source = orderSource ? `?source=${encodeURIComponent(orderSource)}` : "";
-  const response = await waiterFetch(`/api/waiter/kitchen/orders/${orderId}/cancel${source}`, {
+  const response = await waiterFetch(`/api/staff/kitchen/orders/${orderId}/cancel${source}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",
@@ -740,7 +505,7 @@ export async function cancelKitchenOrder(
 }
 
 export async function getWaiterOrder(orderId: number): Promise<OrderResponse> {
-  const response = await waiterFetch(`/api/waiter/orders/${orderId}`, {
+  const response = await waiterFetch(`/api/staff/orders/${orderId}`, {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -753,7 +518,7 @@ export async function getWaiterOrder(orderId: number): Promise<OrderResponse> {
 }
 
 export async function listWaiterCatalog(tableId: number): Promise<WaiterCatalogResponse> {
-  const response = await waiterFetch(`/api/waiter/orders/catalog?tableId=${encodeURIComponent(String(tableId))}`, {
+  const response = await waiterFetch(`/api/staff/orders/catalog?tableId=${encodeURIComponent(String(tableId))}`, {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -772,7 +537,7 @@ export async function listWaiterCatalog(tableId: number): Promise<WaiterCatalogR
 
 export async function createWaiterOrder(payload: WaiterCreateOrderRequest): Promise<OrderResponse> {
   const { kitchenEnabled, ...body } = payload;
-  const response = await waiterFetch("/api/waiter/orders", {
+  const response = await waiterFetch("/api/staff/orders", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",
@@ -789,7 +554,7 @@ export async function updateWaiterOrderNote(
   orderId: number,
   note: string,
 ): Promise<OrderResponse> {
-  const response = await waiterFetch(`/api/waiter/orders/${orderId}/note`, {
+  const response = await waiterFetch(`/api/staff/orders/${orderId}/note`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",
@@ -803,7 +568,7 @@ export async function updateWaiterOrderNote(
 }
 
 export async function listWaiterReadyOrders(): Promise<OrderResponse[]> {
-  const response = await waiterFetch("/api/waiter/orders/ready", {
+  const response = await waiterFetch("/api/staff/orders/ready", {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -830,10 +595,10 @@ export async function runWaiterFlowAction(
     http.scope === "kitchen" && orderSource ? `?source=${encodeURIComponent(orderSource)}` : "";
   const path =
     http.scope === "kitchen"
-      ? `/api/waiter/kitchen/orders/${orderId}/${http.path}${source}`
+      ? `/api/staff/kitchen/orders/${orderId}/${http.path}${source}`
       : http.scope === "courier"
-        ? `/api/waiter/courier/orders/${orderId}/${http.path}`
-        : `/api/waiter/orders/${orderId}/${http.path}`;
+        ? `/api/staff/courier/orders/${orderId}/${http.path}`
+        : `/api/staff/orders/${orderId}/${http.path}`;
   const response = await waiterFetch(path, {
     method: "POST",
     headers: { Accept: "application/json" },
@@ -865,7 +630,7 @@ export async function revertKitchenOrder(
 ): Promise<OrderResponse> {
   const params = new URLSearchParams({ to });
   if (orderSource) params.set("source", orderSource);
-  const response = await waiterFetch(`/api/waiter/kitchen/orders/${orderId}/revert?${params}`, {
+  const response = await waiterFetch(`/api/staff/kitchen/orders/${orderId}/revert?${params}`, {
     method: "POST",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -888,7 +653,7 @@ export function markKitchenDeliveredToCourier(orderId: number, courierStaffId: n
 
 export async function listWaiterKitchenCouriers(branchId?: number | null): Promise<KitchenCourierOption[]> {
   const query = branchId != null ? `?branchId=${branchId}` : "";
-  const response = await waiterFetch(`/api/waiter/kitchen/couriers${query}`, {
+  const response = await waiterFetch(`/api/staff/kitchen/couriers${query}`, {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -909,7 +674,7 @@ export async function handoverKitchenOrderToCourier(
     throw new WaiterApiError(400, "Kurye seçilmedi");
   }
   const source = orderSource ? `?source=${encodeURIComponent(orderSource)}` : "";
-  const response = await waiterFetch(`/api/waiter/kitchen/orders/${orderId}/courier-handover${source}`, {
+  const response = await waiterFetch(`/api/staff/kitchen/orders/${orderId}/courier-handover${source}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",
@@ -956,7 +721,7 @@ export async function markWaiterServiceDelivered(orderId: number): Promise<Order
 }
 
 async function postWaiterOrderStep(orderId: number, path: "preparing" | "served"): Promise<OrderResponse> {
-  const response = await waiterFetch(`/api/waiter/orders/${orderId}/${path}`, {
+  const response = await waiterFetch(`/api/staff/orders/${orderId}/${path}`, {
     method: "POST",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -969,7 +734,7 @@ async function postWaiterOrderStep(orderId: number, path: "preparing" | "served"
 }
 
 export async function listKitchenQueue(): Promise<OrderResponse[]> {
-  const response = await waiterFetch("/api/waiter/kitchen/orders", {
+  const response = await waiterFetch("/api/staff/kitchen/orders", {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -987,7 +752,7 @@ export function markKitchenReady(orderId: number, orderSource?: string | null): 
 }
 
 export async function updateKitchenOrderNote(orderId: number, note: string): Promise<OrderResponse> {
-  const response = await waiterFetch(`/api/waiter/kitchen/orders/${orderId}/note`, {
+  const response = await waiterFetch(`/api/staff/kitchen/orders/${orderId}/note`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",
@@ -1001,7 +766,7 @@ export async function updateKitchenOrderNote(orderId: number, note: string): Pro
 }
 
 export async function listCourierQueue(): Promise<CourierTicket[]> {
-  const response = await waiterFetch("/api/waiter/courier/orders", {
+  const response = await waiterFetch("/api/staff/courier/orders", {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -1132,7 +897,7 @@ export function staffAppForRole(staffRole?: StaffRole | null): StaffApp {
 /* ── Waiter bills ── */
 
 export async function getWaiterOpenBill(tableId: number): Promise<WaiterBill> {
-  const response = await waiterFetch(`/api/waiter/bills/tables/${tableId}/open`, {
+  const response = await waiterFetch(`/api/staff/bills/tables/${tableId}/open`, {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -1145,7 +910,7 @@ export async function getWaiterOpenBill(tableId: number): Promise<WaiterBill> {
 }
 
 export async function getWaiterBill(billId: number): Promise<WaiterBill> {
-  const response = await waiterFetch(`/api/waiter/bills/${billId}`, {
+  const response = await waiterFetch(`/api/staff/bills/${billId}`, {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -1161,7 +926,7 @@ export async function addWaiterBillItems(
   billId: number,
   items: CartItemRequest[],
 ): Promise<WaiterBill> {
-  const response = await waiterFetch(`/api/waiter/bills/${billId}/items`, {
+  const response = await waiterFetch(`/api/staff/bills/${billId}/items`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",
@@ -1179,7 +944,7 @@ export async function updateWaiterBillItemQuantity(
   itemId: number,
   quantity: number,
 ): Promise<WaiterBill> {
-  const response = await waiterFetch(`/api/waiter/bills/${billId}/items/${itemId}`, {
+  const response = await waiterFetch(`/api/staff/bills/${billId}/items/${itemId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",
@@ -1193,7 +958,7 @@ export async function updateWaiterBillItemQuantity(
 }
 
 export async function removeWaiterBillItem(billId: number, itemId: number): Promise<WaiterBill> {
-  const response = await waiterFetch(`/api/waiter/bills/${billId}/items/${itemId}`, {
+  const response = await waiterFetch(`/api/staff/bills/${billId}/items/${itemId}`, {
     method: "DELETE",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -1214,7 +979,7 @@ export async function payWaiterBillItems(
     tipAmount?: number;
   },
 ): Promise<WaiterBill> {
-  const response = await waiterFetch(`/api/waiter/bills/${billId}/pay-items`, {
+  const response = await waiterFetch(`/api/staff/bills/${billId}/pay-items`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",
@@ -1231,7 +996,7 @@ export async function reverseWaiterBillPayment(
   billId: number,
   paymentId: number,
 ): Promise<WaiterBill> {
-  const response = await waiterFetch(`/api/waiter/bills/${billId}/payments/${paymentId}`, {
+  const response = await waiterFetch(`/api/staff/bills/${billId}/payments/${paymentId}`, {
     method: "DELETE",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -1248,7 +1013,7 @@ export async function getWaiterBillSplitPreview(
   personCount: number,
 ): Promise<WaiterSplitPreview> {
   const response = await waiterFetch(
-    `/api/waiter/bills/${billId}/split-preview?personCount=${personCount}`,
+    `/api/staff/bills/${billId}/split-preview?personCount=${personCount}`,
     {
       method: "GET",
       headers: { Accept: "application/json" },
@@ -1272,7 +1037,7 @@ export async function payWaiterBillShare(
     tipAmount?: number;
   },
 ): Promise<WaiterBill> {
-  const response = await waiterFetch(`/api/waiter/bills/${billId}/pay-share`, {
+  const response = await waiterFetch(`/api/staff/bills/${billId}/pay-share`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",
@@ -1293,7 +1058,7 @@ export async function closeWaiterBill(
     tipAmount?: number;
   },
 ): Promise<WaiterBill> {
-  const response = await waiterFetch(`/api/waiter/bills/${billId}/close`, {
+  const response = await waiterFetch(`/api/staff/bills/${billId}/close`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",
@@ -1309,7 +1074,7 @@ export async function closeWaiterBill(
 /* ── Waiter commissions ── */
 
 export async function getWaiterTodayCommission(): Promise<WaiterTodayCommissionSummary> {
-  const response = await waiterFetch("/api/waiter/commissions/today", {
+  const response = await waiterFetch("/api/staff/commissions/today", {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
@@ -1334,7 +1099,7 @@ export async function getWaiterCommissionHistory(params?: {
   if (params?.size != null) search.set("size", String(params.size));
   const query = search.toString();
   const response = await waiterFetch(
-    `/api/waiter/commissions/history${query ? `?${query}` : ""}`,
+    `/api/staff/commissions/history${query ? `?${query}` : ""}`,
     {
       method: "GET",
       headers: { Accept: "application/json" },
@@ -1389,7 +1154,7 @@ export type WaiterManualGrantResponse = {
 
 export async function listWaiterActiveCampaigns(): Promise<WaiterActiveCampaign[]> {
   const response = await waiterFetch(
-    `/api/waiter/campaigns/active`,
+    `/api/staff/campaigns/active`,
     {
       method: "GET",
       headers: { Accept: "application/json" },
@@ -1408,7 +1173,7 @@ export async function lookupWaiterCampaignCustomer(
   email: string,
 ): Promise<WaiterCampaignCustomer> {
   const response = await waiterFetch(
-    `/api/waiter/campaigns/customers?menuId=${encodeURIComponent(String(menuId))}&email=${encodeURIComponent(email)}`,
+    `/api/staff/campaigns/customers?menuId=${encodeURIComponent(String(menuId))}&email=${encodeURIComponent(email)}`,
     {
       method: "GET",
       headers: { Accept: "application/json" },
@@ -1427,7 +1192,7 @@ export async function grantWaiterCampaign(
   payload: WaiterManualGrantRequest,
 ): Promise<WaiterManualGrantResponse> {
   const response = await waiterFetch(
-    `/api/waiter/campaigns/grant?menuId=${encodeURIComponent(String(menuId))}`,
+    `/api/staff/campaigns/grant?menuId=${encodeURIComponent(String(menuId))}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
