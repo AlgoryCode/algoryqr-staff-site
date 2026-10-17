@@ -1563,9 +1563,9 @@ function KitchenHandoverContent({
   const [pickingCourier, setPickingCourier] = useState(picksStaff);
   const availableCouriers = (couriers ?? []).filter((item) => item.available);
   const [pickedCourierId, setCourierId] = useState<number | null>(null);
-  const courierId = availableCouriers.some((item) => item.id === pickedCourierId)
+  const courierStaffId = availableCouriers.some((item) => item.staffId === pickedCourierId)
     ? pickedCourierId
-    : (availableCouriers[0]?.id ?? null);
+    : (availableCouriers[0]?.staffId ?? null);
   const courierBlocked =
     courier.kind === "unavailable"
       ? courier.reason
@@ -1595,15 +1595,15 @@ function KitchenHandoverContent({
         ) : (
           <ul className="flex max-h-72 flex-col gap-2 overflow-y-auto" role="radiogroup" aria-label="Kurye">
             {couriers.map((item) => {
-              const selected = item.id === courierId;
+              const selected = item.staffId === courierStaffId;
               return (
-                <li key={item.id}>
+                <li key={item.staffId}>
                   <button
                     type="button"
                     role="radio"
                     aria-checked={selected}
                     disabled={!item.available}
-                    onClick={() => setCourierId(item.id)}
+                    onClick={() => setCourierId(item.staffId)}
                     className={cn(
                       "flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors",
                       "disabled:cursor-not-allowed disabled:opacity-50",
@@ -1639,8 +1639,10 @@ function KitchenHandoverContent({
           </Button>
           <Button
             className="rounded-xl"
-            disabled={courierId == null}
-            onClick={() => (courierId != null ? onSelectCourier?.(order, courierId) : undefined)}
+            disabled={courierStaffId == null}
+            onClick={() =>
+              courierStaffId != null ? onSelectCourier?.(order, courierStaffId) : undefined
+            }
           >
             Kuryeye teslim et
           </Button>

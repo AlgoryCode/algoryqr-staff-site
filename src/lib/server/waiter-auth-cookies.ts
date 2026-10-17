@@ -10,19 +10,26 @@ export const STAFF_COOKIE_NAMES = {
   waiter: {
     access: "waiter_access",
     refresh: "waiter_refresh",
-    id: "waiter_id",
+    id: "waiter_staff_id",
   },
   kitchen: {
     access: "kitchen_access",
     refresh: "kitchen_refresh",
-    id: "kitchen_id",
+    id: "kitchen_staff_id",
   },
   courier: {
     access: "courier_access",
     refresh: "courier_refresh",
-    id: "courier_id",
+    id: "courier_staff_id",
   },
 } as const;
+
+/** @deprecated Eski oturum çerezleri; okuma geriye dönük desteklenir. */
+const LEGACY_STAFF_ID_COOKIE_NAMES: Record<StaffApp, string> = {
+  waiter: "waiter_id",
+  kitchen: "kitchen_id",
+  courier: "courier_id",
+};
 
 const baseOptions = {
   httpOnly: true,
@@ -60,7 +67,9 @@ export function readStaffRefreshTokenFromCookies(cookieStore: CookieStore, app: 
 }
 
 export function readStaffIdFromCookies(cookieStore: CookieStore, app: StaffApp): number | null {
-  const raw = cookieValue(cookieStore, STAFF_COOKIE_NAMES[app].id);
+  const raw =
+    cookieValue(cookieStore, STAFF_COOKIE_NAMES[app].id) ??
+    cookieValue(cookieStore, LEGACY_STAFF_ID_COOKIE_NAMES[app]);
   if (!raw) return null;
   const parsed = parseInt(raw, 10);
   return Number.isFinite(parsed) ? parsed : null;
@@ -71,26 +80,30 @@ export function setStaffAuthCookies(
   app: StaffApp,
   accessToken?: string,
   refreshToken?: string,
-  waiterId?: number,
+  staffId?: number,
 ) {
   const names = STAFF_COOKIE_NAMES[app];
+  const legacyId = LEGACY_STAFF_ID_COOKIE_NAMES[app];
   if (accessToken) {
     response.cookies.set(names.access, accessToken, cookieOptions);
   }
   if (refreshToken) {
     response.cookies.set(names.refresh, refreshToken, cookieOptions);
   }
-  if (waiterId != null && waiterId > 0) {
-    response.cookies.set(names.id, String(waiterId), cookieOptions);
+  if (staffId != null && staffId > 0) {
+    response.cookies.set(names.id, String(staffId), cookieOptions);
+    response.cookies.set(legacyId, "", { ...cookieOptions, maxAge: 0 });
   }
 }
 
 export function clearStaffAuthCookies(response: NextResponse, app: StaffApp) {
   const names = STAFF_COOKIE_NAMES[app];
+  const legacyId = LEGACY_STAFF_ID_COOKIE_NAMES[app];
   const clearOptions = { ...cookieOptions, maxAge: 0 };
   response.cookies.set(names.access, "", clearOptions);
   response.cookies.set(names.refresh, "", clearOptions);
   response.cookies.set(names.id, "", clearOptions);
+  response.cookies.set(legacyId, "", clearOptions);
 }
 
 export function readWaiterAccessTokenFromCookies(cookieStore: CookieStore): string | null {
@@ -109,9 +122,9 @@ export function setWaiterAuthCookies(
   response: NextResponse,
   accessToken?: string,
   refreshToken?: string,
-  waiterId?: number,
+  staffId?: number,
 ) {
-  setStaffAuthCookies(response, "waiter", accessToken, refreshToken, waiterId);
+  setStaffAuthCookies(response, "waiter", accessToken, refreshToken, staffId);
 }
 
 export function clearWaiterAuthCookies(response: NextResponse) {

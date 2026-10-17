@@ -10,6 +10,7 @@ import {
   type OrderCancelRequest,
 } from "@/lib/order-flow";
 import { isPhoneCustomerName, stripPhoneCustomerName } from "@/lib/phone-order";
+import { parseNumericId } from "@/lib/auth-user";
 import type { OrderItemResponse, OrderResponse } from "@/lib/ordering-api";
 import type { StoreOrderDetail, StoreOrderPage, StoreOrderSummary } from "@/lib/store-api";
 import { formatStoreAddress } from "@/lib/store-ui";
@@ -120,7 +121,8 @@ function storeOrderTicket(order: StoreOrderSummary | StoreOrderDetail): OrderRes
     branchId: order.branchId ?? null,
     deliveryType: order.deliveryType,
     deliveryAddress: address && address !== "-" ? address : null,
-    courierStaffId: detail.courierStaff?.id ?? null,
+    courierStaffId:
+      parseNumericId(detail.courierStaff?.staffId) ?? parseNumericId(detail.courierStaff?.id) ?? null,
     courierStaffName: detail.courierStaff?.displayName ?? null,
     status: order.status,
     totalAmount: order.totalAmount,
@@ -218,7 +220,7 @@ export async function cancelStoreKitchenOrder(orderId: number, request: OrderCan
 }
 
 export type KitchenCourierOption = {
-  id: number;
+  staffId: number;
   displayName: string;
   branchId?: number | null;
   available: boolean;
@@ -226,12 +228,30 @@ export type KitchenCourierOption = {
   onTheRoadCount: number;
 };
 
+export function normalizeKitchenCourierOption(raw: unknown): KitchenCourierOption | null {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as Record<string, unknown>;
+  const staffId = parseNumericId(row.staffId) ?? parseNumericId(row.id);
+  if (staffId == null) return null;
+  return {
+    staffId,
+    displayName: typeof row.displayName === "string" ? row.displayName : "",
+    branchId: parseNumericId(row.branchId),
+    available: row.available !== false,
+    waitingCount: typeof row.waitingCount === "number" ? row.waitingCount : 0,
+    onTheRoadCount: typeof row.onTheRoadCount === "number" ? row.onTheRoadCount : 0,
+  };
+}
+
 export async function listKitchenCouriers(branchId?: number | null): Promise<KitchenCourierOption[]> {
   const query = branchId != null ? `?branchId=${branchId}` : "";
   const response = await fetchStore(`/api/store/orders/couriers${query}`, { method: "GET" });
   if (!response.ok) return [];
   const data = readJson(await response.text());
-  return Array.isArray(data) ? (data as KitchenCourierOption[]) : [];
+  if (!Array.isArray(data)) return [];
+  return data
+    .map(normalizeKitchenCourierOption)
+    .filter((item): item is KitchenCourierOption => item != null);
 }
 
 export async function handoverStoreOrderToCourier(orderId: number, courierStaffId: number): Promise<OrderResponse> {

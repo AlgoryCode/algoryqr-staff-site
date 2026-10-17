@@ -10,24 +10,33 @@ import {
   type OrderCancelRequest,
   type OrderFlowAction,
 } from "@/lib/order-flow";
+import {
+  getBranchIdFromAccessToken,
+  getMerchantIdFromAccessToken,
+  getRolesFromAccessToken,
+  getStaffIdFromAccessToken,
+  getSubjectFromAccessToken,
+  parseNumericId,
+} from "@/lib/auth-user";
 import { asCourierTickets, type CourierTicket } from "@/lib/store-courier";
-import { asKitchenTickets, type KitchenCourierOption } from "@/lib/store-kitchen";
+import {
+  asKitchenTickets,
+  normalizeKitchenCourierOption,
+  type KitchenCourierOption,
+} from "@/lib/store-kitchen";
 
 export type StaffRole = "WAITER" | "KITCHEN" | "COURIER";
 
 export type WaiterAuthResult = {
-  accessToken?: string;
+  accessToken: string;
   refreshToken?: string;
-  waiterId?: number;
-  branchId?: number;
-  displayName?: string;
-  staffRole?: StaffRole;
   message?: string;
 };
 
 export type WaiterMe = {
-  waiterId: number;
+  staffId: number;
   branchId: number;
+  merchantId?: number;
   ownerUserId?: number;
   username?: string;
   displayName?: string;
@@ -209,17 +218,158 @@ const WAITER_PUBLIC_AUTH_PATHS = [
   "/api/staff/auth/login",
   "/api/staff/auth/logout",
   "/api/staff/auth/refresh",
+  "/api/staff/auth/ping",
 ] as const;
+
+/** httpOnly staff çerezlerinin tarayıcıda olup olmadığını doğrular (sessionStorage profili yetmez). */
+export async function pingStaffAuthCookies(app: StaffApp = currentStaffApp()): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  const response = await fetch(
+    "/api/staff/auth/ping",
+    withStaffAppHeaders(
+      {
+        method: "GET",
+        headers: { Accept: "application/json" },
+      },
+      app,
+    ),
+  );
+  return response.ok;
+}
 
 function isWaiterPublicAuthPath(url: string): boolean {
   return WAITER_PUBLIC_AUTH_PATHS.some((path) => url.includes(path));
 }
 
 const STAFF_APP_STORAGE_KEY = "algory-staff-app";
+const STAFF_PROFILE_STORAGE_KEY = "algory-staff-profile";
 
 export function rememberStaffApp(app: StaffApp): void {
   if (typeof window === "undefined") return;
   sessionStorage.setItem(STAFF_APP_STORAGE_KEY, app);
+}
+
+function staffRoleFromAccessToken(accessToken: string): StaffRole {
+  for (const role of getRolesFromAccessToken(accessToken)) {
+    const code = role.replace(/^ROLE_/, "").trim().toUpperCase();
+    if (code === "KITCHEN") return "KITCHEN";
+    if (code === "COURIER") return "COURIER";
+  }
+  return "WAITER";
+}
+
+/** Personel oturumu: kimlik ve şube bilgisi yalnızca access token claim'lerinden okunur. */
+export function staffMeFromAccessToken(accessToken: string): WaiterMe | null {
+  const staffId = getStaffIdFromAccessToken(accessToken);
+  const branchId = getBranchIdFromAccessToken(accessToken);
+  const merchantId = getMerchantIdFromAccessToken(accessToken);
+  if (staffId == null || branchId == null || merchantId == null) return null;
+  const staffRole = staffRoleFromAccessToken(accessToken);
+  return {
+    staffId,
+    branchId,
+    merchantId,
+    username: getSubjectFromAccessToken(accessToken) ?? undefined,
+    staffRole,
+    kitchenEnabled: staffRole === "KITCHEN",
+    courierEnabled: staffRole === "COURIER",
+    active: true,
+  };
+}
+
+function readAccessTokenFromRecord(data: Record<string, unknown>): string | null {
+  const raw = data.accessToken ?? data.access_token;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+}
+
+export function isStaffProfileComplete(me: WaiterMe): boolean {
+  return me.staffId > 0 && me.branchId > 0 && me.merchantId != null && me.merchantId > 0;
+}
+
+/** sessionStorage'daki profil (yalnızca `staffId` alanı; girişte token'dan üretilir). */
+export function normalizeWaiterMe(data: Record<string, unknown>): WaiterMe {
+  const token = readAccessTokenFromRecord(data);
+  if (token) {
+    const fromToken = staffMeFromAccessToken(token);
+    if (fromToken) return fromToken;
+  }
+  const role = parseStaffRole(data.staffRole);
+  const merchantId = parseNumericId(data.merchantId) ?? undefined;
+  const branchId = parseNumericId(data.branchId) ?? 0;
+  return {
+    staffId: parseNumericId(data.staffId) ?? 0,
+    branchId,
+    merchantId,
+    username: typeof data.username === "string" ? data.username : undefined,
+    displayName: typeof data.displayName === "string" ? data.displayName : undefined,
+    staffRole: role,
+    kitchenEnabled: role === "KITCHEN" || data.kitchenEnabled === true,
+    courierEnabled: role === "COURIER" || data.courierEnabled === true,
+    active: data.active !== false,
+  };
+}
+
+export function rememberStaffProfile(me: WaiterMe): void {
+  if (typeof window === "undefined") return;
+  sessionStorage.setItem(STAFF_PROFILE_STORAGE_KEY, JSON.stringify(me));
+  // #region agent log
+  fetch("/api/debug-agent/log", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      hypothesisId: "H6",
+      location: "waiter-api.ts:rememberStaffProfile",
+      message: "profile saved to sessionStorage",
+      data: {
+        staffId: me.staffId,
+        branchId: me.branchId,
+        merchantId: me.merchantId ?? null,
+        staffRole: me.staffRole,
+      },
+      runId: "post-fix-2",
+    }),
+  }).catch(() => {});
+  // #endregion
+}
+
+export function loadStaffProfileFromStorage(): WaiterMe | null {
+  if (typeof window === "undefined") return null;
+  const raw = sessionStorage.getItem(STAFF_PROFILE_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return null;
+    return normalizeWaiterMe(parsed as Record<string, unknown>);
+  } catch {
+    return null;
+  }
+}
+
+export function clearStaffProfile(): void {
+  if (typeof window === "undefined") return;
+  sessionStorage.removeItem(STAFF_PROFILE_STORAGE_KEY);
+  // #region agent log
+  fetch("/api/debug-agent/log", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      hypothesisId: "H6",
+      location: "waiter-api.ts:clearStaffProfile",
+      message: "sessionStorage profile cleared",
+      data: { path: window.location.pathname },
+      runId: "post-fix-2",
+    }),
+  }).catch(() => {});
+  // #endregion
+}
+
+/** Oturum profili login yanıtından gelir; token doğrulaması staff API isteklerinde yapılır. */
+export function loadStaffSession(): { me: WaiterMe; app: StaffApp } | null {
+  const me = loadStaffProfileFromStorage();
+  if (!me) return null;
+  const app = staffAppForRole(me.staffRole);
+  rememberStaffApp(app);
+  return { me, app };
 }
 
 export function currentStaffApp(): StaffApp {
@@ -228,30 +378,8 @@ export function currentStaffApp(): StaffApp {
   if (stored === "kitchen" || stored === "courier" || stored === "waiter") return stored;
   if (window.location.pathname.startsWith("/mutfak")) return "kitchen";
   if (window.location.pathname.startsWith("/kurye")) return "courier";
+  if (window.location.pathname.startsWith("/garson")) return "waiter";
   return "waiter";
-}
-
-const STAFF_APP_TRY_ORDER: StaffApp[] = ["waiter", "kitchen", "courier"];
-
-export async function resolveStaffSession(): Promise<{ me: WaiterMe; app: StaffApp } | null> {
-  for (const app of STAFF_APP_TRY_ORDER) {
-    const response = await fetch("/api/staff/auth/me", {
-      credentials: "same-origin",
-      headers: { Accept: "application/json", [STAFF_APP_HEADER]: app },
-    });
-    if (!response.ok) continue;
-    const me = await parseJson<WaiterMe>(response);
-    rememberStaffApp(app);
-    return {
-      me: {
-        ...me,
-        kitchenEnabled: me.kitchenEnabled === true,
-        courierEnabled: me.courierEnabled === true,
-      },
-      app,
-    };
-  }
-  return null;
 }
 
 function withStaffAppHeaders(init?: RequestInit, app?: StaffApp): RequestInit {
@@ -278,10 +406,19 @@ export async function refreshWaiterSession(app: StaffApp = currentStaffApp()): P
           ),
         );
         if (response.status === 401) {
-          await fetch("/api/staff/auth/logout", withStaffAppHeaders({ method: "POST" }, app)).catch(
-            () => undefined,
-          );
-          window.location.assign(staffLoginPath(app));
+          // #region agent log
+          fetch("/api/debug-agent/log", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              hypothesisId: "H12",
+              location: "waiter-api.ts:refreshWaiterSession",
+              message: "staff refresh 401 (no auto logout)",
+              data: { app },
+              runId: "post-fix-2",
+            }),
+          }).catch(() => {});
+          // #endregion
           return false;
         }
         return response.ok;
@@ -304,9 +441,29 @@ async function waiterFetch(input: RequestInfo | URL, init?: RequestInit): Promis
     response.status === 401 &&
     !isWaiterPublicAuthPath(url)
   ) {
-    const refreshed = await refreshWaiterSession();
-    if (refreshed) {
-      return fetch(input, withStaffAppHeaders(init));
+    const refreshAttemptedByProxy = response.headers.get("x-staff-refresh-attempted") === "1";
+    // #region agent log
+    fetch("/api/debug-agent/log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        hypothesisId: "H12",
+        location: "waiter-api.ts:waiterFetch",
+        message: "staff API 401",
+        data: {
+          path: url.replace(/\?.*$/, ""),
+          app: currentStaffApp(),
+          refreshAttemptedByProxy,
+        },
+        runId: "post-fix-2",
+      }),
+    }).catch(() => {});
+    // #endregion
+    if (!refreshAttemptedByProxy) {
+      const refreshed = await refreshWaiterSession();
+      if (refreshed) {
+        return fetch(input, withStaffAppHeaders(init));
+      }
     }
   }
   return response;
@@ -318,6 +475,13 @@ export class WaiterApiError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+export function isStaffUpstreamUnavailableError(error: unknown): boolean {
+  if (!(error instanceof WaiterApiError)) return false;
+  if (error.status === 504) return true;
+  const msg = error.message.toLocaleLowerCase("tr-TR");
+  return msg.includes("gateway timeout") || msg.includes("yanıt vermiyor");
 }
 
 function messageFromUnknown(data: unknown, fallback: string): string {
@@ -357,27 +521,27 @@ export async function waiterLogin(payload: {
   if (!response.ok) {
     throw new WaiterApiError(response.status, data.message || "Giriş başarısız");
   }
-  return data;
+  const accessToken = readAccessTokenFromRecord(data as Record<string, unknown>);
+  if (!accessToken) {
+    throw new WaiterApiError(502, "Access token alınamadı");
+  }
+  const me = staffMeFromAccessToken(accessToken);
+  if (!me) {
+    throw new WaiterApiError(502, "Personel bilgileri access token içinde eksik");
+  }
+  rememberStaffProfile(me);
+  rememberStaffApp(staffAppForRole(me.staffRole));
+  return {
+    accessToken,
+    refreshToken: typeof data.refreshToken === "string" ? data.refreshToken : undefined,
+  };
 }
 
 export async function waiterLogout(app: StaffApp = currentStaffApp()): Promise<void> {
+  clearStaffProfile();
   await fetch("/api/staff/auth/logout", withStaffAppHeaders({ method: "POST" }, app)).catch(
     () => undefined,
   );
-}
-
-export async function waiterMe(): Promise<WaiterMe | null> {
-  const response = await waiterFetch("/api/staff/auth/me", {
-    method: "GET",
-    headers: { Accept: "application/json" },
-    credentials: "same-origin",
-  });
-  if (response.status === 401) return null;
-  const data = await parseJson<WaiterMe & { message?: string }>(response);
-  if (!response.ok) {
-    throw new WaiterApiError(response.status, data.message || "Profil alınamadı");
-  }
-  return data;
 }
 
 /* ── Waiter orders ── */
@@ -408,14 +572,41 @@ export async function listWaiterTodayOrders(): Promise<OrderResponse[]> {
   return asKitchenTickets(data).map(applyKitchenOrderFlow);
 }
 
-export async function listWaiterTables(): Promise<WaiterTableSummary[]> {
-  const response = await waiterFetch("/api/staff/orders/tables", {
+export async function listWaiterTables(merchantId: number, branchId: number): Promise<WaiterTableSummary[]> {
+  const response = await waiterFetch(
+    `/api/staff/merchant/${encodeURIComponent(String(merchantId))}/branches/${encodeURIComponent(String(branchId))}/tables`,
+    {
     method: "GET",
     headers: { Accept: "application/json" },
-    credentials: "same-origin",
-  });
+      credentials: "same-origin",
+    },
+  );
   const data = await parseJson<WaiterTableSummary[] | { message?: string }>(response);
   if (!response.ok) {
+    // #region agent log
+    fetch("http://127.0.0.1:7330/ingest/2366e9f5-7b51-4199-a4c5-a408ebc3e875", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "c205fe",
+      },
+      body: JSON.stringify({
+        sessionId: "c205fe",
+        hypothesisId: "H4",
+        location: "waiter-api.ts:listWaiterTables",
+        message: "listWaiterTables failed",
+        data: {
+          merchantId,
+          branchId,
+          status: response.status,
+          apiMessage: messageFromUnknown(data, ""),
+          staffApp: currentStaffApp(),
+        },
+        timestamp: Date.now(),
+        runId: "pre-fix",
+      }),
+    }).catch(() => {});
+    // #endregion
     throw new WaiterApiError(response.status, messageFromUnknown(data, "Masalar alınamadı"));
   }
   return Array.isArray(data) ? data : [];
@@ -662,7 +853,10 @@ export async function listWaiterKitchenCouriers(branchId?: number | null): Promi
   if (!response.ok) {
     throw new WaiterApiError(response.status, messageFromUnknown(data, "Kurye listesi alınamadı"));
   }
-  return Array.isArray(data) ? data : [];
+  if (!Array.isArray(data)) return [];
+  return data
+    .map(normalizeKitchenCourierOption)
+    .filter((item): item is KitchenCourierOption => item != null);
 }
 
 export async function handoverKitchenOrderToCourier(
@@ -877,11 +1071,23 @@ export function staffAppMismatchMessage(expected: StaffRole, actual?: StaffRole 
   return "Bu hesap mutfak içindir. Mutfak girişini kullanın.";
 }
 
-export function staffHomePath(_staffRole?: StaffRole | null): string {
-  return STAFF_GATE_PATH;
+export function staffHomePath(staffRole?: StaffRole | null): string {
+  if (isKitchenRole(staffRole)) return STAFF_KITCHEN_PATH;
+  if (isCourierRole(staffRole)) return STAFF_COURIER_PATH;
+  return STAFF_WAITER_PATH;
 }
 
 export const STAFF_GATE_PATH = "/";
+export const STAFF_WAITER_PATH = "/garson";
+export const STAFF_KITCHEN_PATH = "/mutfak";
+export const STAFF_COURIER_PATH = "/kurye";
+
+export function staffRoleFromPath(pathname: string): StaffRole | null {
+  if (pathname.startsWith(STAFF_KITCHEN_PATH)) return "KITCHEN";
+  if (pathname.startsWith(STAFF_COURIER_PATH)) return "COURIER";
+  if (pathname.startsWith(STAFF_WAITER_PATH)) return "WAITER";
+  return null;
+}
 
 export function staffLoginPath(app?: StaffApp): string {
   void app;

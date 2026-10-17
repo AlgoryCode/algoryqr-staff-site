@@ -1,48 +1,43 @@
-import axios, { AxiosError } from "axios";
+import { AxiosError } from "axios";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
+import {
+  getBranchIdFromAccessToken,
+  getMerchantIdFromAccessToken,
+  getStaffIdFromAccessToken,
+  parseNumericId,
+} from "@/lib/auth-user";
 import { authUrl } from "@/lib/config";
+import { agentDebugLogServer } from "@/lib/server/agent-debug-log";
 import { clientContextHeaders } from "@/lib/server/client-headers";
+import { qrServiceAxios, upstreamTimeoutMessage } from "@/lib/server/qr-service-axios";
+import { refreshStaffTokensDeduped } from "@/lib/server/staff-token-refresh";
 import {
   clearStaffAuthCookies,
   readStaffAccessTokenFromCookies,
   readStaffRefreshTokenFromCookies,
   setStaffAuthCookies,
   staffAppFromRequest,
-  type StaffApp,
 } from "@/lib/server/waiter-auth-cookies";
 
-function appForStaffRole(role: unknown): StaffApp {
-  const raw = typeof role === "string" ? role.trim().toUpperCase() : "";
-  if (raw === "KITCHEN") return "kitchen";
-  if (raw === "COURIER") return "courier";
-  return "waiter";
-}
-
 function readMerchantId(value: unknown): number | null {
-  const raw = typeof value === "number" ? value : typeof value === "string" ? Number(value.trim()) : NaN;
-  if (!Number.isSafeInteger(raw) || raw <= 0) return null;
-  return raw;
+  return parseNumericId(value);
 }
 
-function staffIdFrom(data: Record<string, unknown>): number | undefined {
-  const raw = data.staffId ?? data.waiterId;
-  return typeof raw === "number" && raw > 0 ? raw : undefined;
+function staffIdFromAccessTokenOnly(accessToken: string): number | undefined {
+  return getStaffIdFromAccessToken(accessToken) ?? undefined;
 }
 
-function publicStaffProfile(data: Record<string, unknown>) {
-  const role = typeof data.staffRole === "string" ? data.staffRole : "WAITER";
+function readTokensFromBody(data: Record<string, unknown>): {
+  accessToken?: string;
+  refreshToken?: string;
+} {
+  const accessRaw = data.accessToken ?? data.access_token;
+  const refreshRaw = data.refreshToken ?? data.refresh_token;
   return {
-    staffId: staffIdFrom(data) ?? null,
-    waiterId: staffIdFrom(data) ?? null,
-    branchId: typeof data.branchId === "number" ? data.branchId : null,
-    displayName: typeof data.displayName === "string" ? data.displayName : null,
-    username: typeof data.username === "string" ? data.username : null,
-    staffRole: role,
-    kitchenEnabled: role === "KITCHEN" || data.kitchenEnabled === true,
-    courierEnabled: role === "COURIER" || data.courierEnabled === true,
-    active: data.active !== false,
+    accessToken: typeof accessRaw === "string" && accessRaw ? accessRaw : undefined,
+    refreshToken: typeof refreshRaw === "string" && refreshRaw ? refreshRaw : undefined,
   };
 }
 
@@ -60,23 +55,13 @@ async function readJson(request: Request): Promise<Record<string, unknown> | nul
 function upstreamError(error: unknown) {
   if (error instanceof AxiosError) {
     if (error.code === "ECONNABORTED") {
-      return NextResponse.json({ message: "Gateway timeout" }, { status: 504 });
+      return NextResponse.json(upstreamTimeoutMessage(authUrl("staffLogin")), { status: 504 });
     }
     if (error.response) {
       return NextResponse.json(error.response.data ?? {}, { status: error.response.status });
     }
   }
   return NextResponse.json({ message: "Sunucu hatası" }, { status: 500 });
-}
-
-function profileFromAccess(data: Record<string, unknown>) {
-  const profile = (typeof data.profile === "object" && data.profile != null
-    ? data.profile
-    : {}) as Record<string, unknown>;
-  return {
-    ...profile,
-    staffRole: typeof data.role === "string" ? data.role : profile.role,
-  };
 }
 
 async function handleLogin(request: Request) {
@@ -94,8 +79,10 @@ async function handleLogin(request: Request) {
     return NextResponse.json({ message: "Kullanıcı adı ve şifre gerekli" }, { status: 400 });
   }
 
+  const app = staffAppFromRequest(request);
+
   try {
-    const upstream = await axios.post<Record<string, unknown>>(
+    const upstream = await qrServiceAxios.post<Record<string, unknown>>(
       authUrl("staffLogin"),
       { merchantId, username, password },
       {
@@ -104,8 +91,6 @@ async function handleLogin(request: Request) {
           "Content-Type": "application/json",
           ...clientContextHeaders(request),
         },
-        validateStatus: () => true,
-        timeout: 20_000,
       },
     );
     const data = (typeof upstream.data === "object" && upstream.data != null ? upstream.data : {}) as Record<
@@ -117,29 +102,44 @@ async function handleLogin(request: Request) {
       return NextResponse.json({ message }, { status: upstream.status || 401 });
     }
 
-    const accessToken = typeof data.accessToken === "string" ? data.accessToken : undefined;
-    const refreshToken = typeof data.refreshToken === "string" ? data.refreshToken : undefined;
-    const access = accessToken
-      ? await axios.get<Record<string, unknown>>(authUrl("access"), {
-          headers: { Accept: "application/json", Authorization: `Bearer ${accessToken}` },
-          validateStatus: () => true,
-          timeout: 20_000,
-        })
-      : null;
-    const accessBody = (access && typeof access.data === "object" && access.data != null ? access.data : {}) as Record<
-      string,
-      unknown
-    >;
-    const staff = profileFromAccess(accessBody);
-    const app = appForStaffRole(staff.staffRole);
-    const response = NextResponse.json(publicStaffProfile(staff));
-    setStaffAuthCookies(
-      response,
-      app,
-      accessToken,
-      refreshToken,
-      staffIdFrom(staff) ?? staffIdFrom(data),
-    );
+    const { accessToken, refreshToken } = readTokensFromBody(data);
+    if (!accessToken) {
+      return NextResponse.json({ message: "Oturum token'ları alınamadı" }, { status: 502 });
+    }
+
+    const staffId = staffIdFromAccessTokenOnly(accessToken);
+    if (staffId == null) {
+      // #region agent log
+      agentDebugLogServer({
+        hypothesisId: "H4",
+        location: "staff-auth.ts:handleLogin",
+        message: "login rejected missing staffId in JWT",
+        data: { app, hasRefresh: Boolean(refreshToken) },
+        runId: "post-fix-2",
+      });
+      // #endregion
+      return NextResponse.json({ message: "Personel kimliği access token içinde yok" }, { status: 502 });
+    }
+
+    const responseBody: Record<string, string> = { accessToken };
+    if (refreshToken) responseBody.refreshToken = refreshToken;
+    const response = NextResponse.json(responseBody);
+    setStaffAuthCookies(response, app, accessToken, refreshToken, staffId);
+    // #region agent log
+    agentDebugLogServer({
+      hypothesisId: "H4",
+      location: "staff-auth.ts:handleLogin",
+      message: "login ok cookies set",
+      data: {
+        app,
+        staffId,
+        branchId: getBranchIdFromAccessToken(accessToken),
+        merchantId: getMerchantIdFromAccessToken(accessToken),
+        hasRefresh: Boolean(refreshToken),
+      },
+      runId: "post-fix-2",
+    });
+    // #endregion
     return response;
   } catch (error) {
     return upstreamError(error);
@@ -148,45 +148,27 @@ async function handleLogin(request: Request) {
 
 async function handleRefresh(request: Request) {
   const app = staffAppFromRequest(request);
-  const cookieStore = await cookies();
-  const refreshToken = readStaffRefreshTokenFromCookies(cookieStore, app);
-  if (!refreshToken) {
-    return NextResponse.json({ message: "Oturum gerekli" }, { status: 401 });
-  }
-
   try {
-    const upstream = await axios.post<Record<string, unknown>>(
-      authUrl("refresh"),
-      { refreshToken },
-      {
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          ...clientContextHeaders(request),
-        },
-        validateStatus: () => true,
-        timeout: 20_000,
-      },
-    );
-    const data = (typeof upstream.data === "object" && upstream.data != null ? upstream.data : {}) as Record<
-      string,
-      unknown
-    >;
-    if (upstream.status < 200 || upstream.status >= 300) {
-      const response = NextResponse.json(
-        { message: typeof data.message === "string" ? data.message : "Oturum gerekli" },
-        { status: upstream.status || 401 },
-      );
-      clearStaffAuthCookies(response, app);
-      return response;
+    const tokens = await refreshStaffTokensDeduped(app);
+    if (!tokens) {
+      // #region agent log
+      agentDebugLogServer({
+        hypothesisId: "H12",
+        location: "staff-auth.ts:handleRefresh",
+        message: "refresh route failed (cookies kept)",
+        data: { app },
+        runId: "post-fix-2",
+      });
+      // #endregion
+      return NextResponse.json({ message: "Oturum gerekli" }, { status: 401 });
     }
     const response = NextResponse.json({ ok: true });
     setStaffAuthCookies(
       response,
-      appForStaffRole(data.staffRole ?? (app === "kitchen" ? "KITCHEN" : app === "courier" ? "COURIER" : "WAITER")),
-      typeof data.accessToken === "string" ? data.accessToken : undefined,
-      typeof data.refreshToken === "string" ? data.refreshToken : undefined,
-      staffIdFrom(data),
+      app,
+      tokens.accessToken,
+      tokens.refreshToken,
+      tokens.staffId,
     );
     return response;
   } catch (error) {
@@ -201,7 +183,7 @@ async function handleLogout(request: Request) {
   const refreshToken = readStaffRefreshTokenFromCookies(cookieStore, app);
   if (refreshToken) {
     try {
-      await axios.post(
+      await qrServiceAxios.post(
         authUrl("logout"),
         { refreshToken },
         {
@@ -211,8 +193,6 @@ async function handleLogout(request: Request) {
             ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
             ...clientContextHeaders(request),
           },
-          validateStatus: () => true,
-          timeout: 20_000,
         },
       );
     } catch {
@@ -224,28 +204,25 @@ async function handleLogout(request: Request) {
   return response;
 }
 
-async function handleMe(request: Request) {
+async function handlePing(request: Request) {
   const app = staffAppFromRequest(request);
   const cookieStore = await cookies();
-  const accessToken = readStaffAccessTokenFromCookies(cookieStore, app);
-  if (!accessToken) {
+  const access = readStaffAccessTokenFromCookies(cookieStore, app);
+  const refresh = readStaffRefreshTokenFromCookies(cookieStore, app);
+  const ok = Boolean(access || refresh);
+  // #region agent log
+  agentDebugLogServer({
+    hypothesisId: "H16",
+    location: "staff-auth.ts:handlePing",
+    message: ok ? "staff auth cookies present" : "staff auth cookies missing",
+    data: { app, hasAccess: Boolean(access), hasRefresh: Boolean(refresh) },
+    runId: "post-fix-6",
+  });
+  // #endregion
+  if (!ok) {
     return NextResponse.json({ message: "Oturum gerekli" }, { status: 401 });
   }
-  try {
-    const access = await axios.get<Record<string, unknown>>(authUrl("access"), {
-      headers: { Accept: "application/json", Authorization: `Bearer ${accessToken}` },
-      validateStatus: () => true,
-      timeout: 20_000,
-    });
-    const data = (typeof access.data === "object" && access.data != null ? access.data : {}) as Record<string, unknown>;
-    if (access.status < 200 || access.status >= 300) {
-      const message = typeof data.message === "string" ? data.message : "Oturum gerekli";
-      return NextResponse.json({ message }, { status: access.status || 401 });
-    }
-    return NextResponse.json(publicStaffProfile(profileFromAccess(data)));
-  } catch (error) {
-    return upstreamError(error);
-  }
+  return NextResponse.json({ ok: true });
 }
 
 export async function handleStaffAuth(
@@ -253,9 +230,9 @@ export async function handleStaffAuth(
   method: string,
   key: string,
 ): Promise<NextResponse | null> {
+  if (method === "GET" && key === "auth/ping") return handlePing(request);
   if (method === "POST" && key === "auth/login") return handleLogin(request);
   if (method === "POST" && key === "auth/refresh") return handleRefresh(request);
   if (method === "POST" && key === "auth/logout") return handleLogout(request);
-  if (method === "GET" && key === "auth/me") return handleMe(request);
   return null;
 }

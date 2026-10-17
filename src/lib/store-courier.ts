@@ -1,3 +1,4 @@
+import { parseNumericId } from "@/lib/auth-user";
 import { readKitchenOrderList } from "@/lib/kitchen-queue";
 import { loadPackageAccess } from "@/lib/load-package-access";
 import { applyOrderFlow, writeOrderFlowStatus } from "@/lib/order-flow";
@@ -133,7 +134,8 @@ export function storeOrderToCourierTicket(order: StoreOrderSummary | StoreOrderD
     paymentMethod: order.paymentMethod,
     courierName: order.courier?.fullName ?? null,
     courierPhone: order.courier?.phone ?? null,
-    courierStaffId: detail.courierStaff?.id ?? null,
+    courierStaffId:
+      parseNumericId(detail.courierStaff?.staffId) ?? parseNumericId(detail.courierStaff?.id) ?? null,
     items: mapStoreItems(detail),
     createdAt: order.createdAt,
     readyAt: detail.readyAt ?? null,

@@ -148,13 +148,68 @@ export function resolveRefreshExpiresAt(
   return getExpFromJwt(refreshToken) ?? isoToEpochSeconds(refreshExpiresAt) ?? undefined;
 }
 
-function parseNumericClaim(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
+export function parseNumericId(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const n = Math.trunc(value);
+    return n > 0 ? n : null;
+  }
   if (typeof value === "string") {
-    const n = parseInt(value, 10);
-    return Number.isFinite(n) ? n : null;
+    const trimmed = value.trim();
+    if (!/^\d+$/.test(trimmed)) return null;
+    const n = parseInt(trimmed, 10);
+    return Number.isSafeInteger(n) && n > 0 ? n : null;
   }
   return null;
+}
+
+function parseNumericClaim(value: unknown): number | null {
+  return parseNumericId(value);
+}
+
+export function getStaffIdFromAccessToken(token?: string | null): number | null {
+  if (!token) return null;
+  const payload = parseJwtPayload(token);
+  if (!payload) return null;
+  const fromStaffClaims =
+    parseNumericClaim(payload.staffId) ?? parseNumericClaim(payload.staff_id);
+  if (fromStaffClaims != null) return fromStaffClaims;
+  const subjectType =
+    typeof payload.subjectType === "string" ? payload.subjectType.trim().toUpperCase() : "";
+  if (subjectType === "STAFF") {
+    return parseNumericClaim(payload.userId) ?? parseNumericClaim(payload.user_id);
+  }
+  return null;
+}
+
+export function getSubjectFromAccessToken(token?: string | null): string | null {
+  if (!token) return null;
+  const payload = parseJwtPayload(token);
+  if (!payload) return null;
+  const sub = payload.sub;
+  return typeof sub === "string" && sub.trim() ? sub.trim() : null;
+}
+
+export function getRolesFromAccessToken(token?: string | null): string[] {
+  if (!token) return [];
+  const payload = parseJwtPayload(token);
+  if (!payload) return [];
+  const roles = payload.roles;
+  if (!Array.isArray(roles)) return [];
+  return roles.map((r) => String(r));
+}
+
+export function getBranchIdFromAccessToken(token?: string | null): number | null {
+  if (!token) return null;
+  const payload = parseJwtPayload(token);
+  if (!payload) return null;
+  return parseNumericClaim(payload.branchId) ?? parseNumericClaim(payload.branch_id);
+}
+
+export function getMerchantIdFromAccessToken(token?: string | null): number | null {
+  if (!token) return null;
+  const payload = parseJwtPayload(token);
+  if (!payload) return null;
+  return parseNumericClaim(payload.merchantId) ?? parseNumericClaim(payload.merchant_id);
 }
 
 export function getUserIdFromAccessToken(token?: string | null): number | null {

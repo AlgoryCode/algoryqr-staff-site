@@ -73,7 +73,7 @@ export default function StaffCourierView() {
                 : null
           }
           busyOrderId={action.isPending ? action.variables?.orderId : null}
-          currentStaffId={me.waiterId}
+          currentStaffId={me.staffId}
           onDispatch={(orderId) => action.mutate({ orderId, kind: "dispatch" })}
           onDeliver={(orderId) => action.mutate({ orderId, kind: "deliver" })}
         />

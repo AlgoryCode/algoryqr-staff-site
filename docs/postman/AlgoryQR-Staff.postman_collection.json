@@ -1,0 +1,569 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-staff-algoryqr-2026",
+    "name": "AlgoryQR Staff",
+    "description": "Staff (garson / mutfak / kurye) API istekleri.\n\n**İki kullanım modu**\n1. **qr-service (doğrudan)** — `qrApiUrl` + login sonrası `Authorization: Bearer {{accessToken}}`. Postman test script token'ları koleksiyon değişkenlerine yazar.\n2. **staff-site (Next proxy)** — `staffSiteUrl` + `x-staff-app: {{staffApp}}`. Önce **Staff-site → Login**; çerezler Postman cookie jar'da kalmalı (Settings → Cookies).\n\n**Örnek uyuşan kayıt (stage DB):** merchantId=1, branchId=10, staffId=16, username=deneme.\n\nMasalar: JWT'deki merchant/branch ile path uyumlu olmalı (`/merchant/{merchantId}/branches/{branchId}/tables`).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "qrApiUrl", "value": "http://localhost:8080" },
+    { "key": "staffSiteUrl", "value": "http://localhost:3001" },
+    { "key": "merchantId", "value": "1" },
+    { "key": "branchId", "value": "10" },
+    { "key": "staffApp", "value": "waiter" },
+    { "key": "username", "value": "deneme" },
+    { "key": "staffPassword", "value": "" },
+    { "key": "accessToken", "value": "" },
+    { "key": "refreshToken", "value": "" },
+    { "key": "staffId", "value": "" },
+    { "key": "tableId", "value": "1" },
+    { "key": "orderId", "value": "1" },
+    { "key": "billId", "value": "1" },
+    { "key": "menuId", "value": "1" },
+    { "key": "shiftId", "value": "1" },
+    { "key": "courierStaffId", "value": "1" },
+    { "key": "paymentId", "value": "1" },
+    { "key": "billItemId", "value": "1" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Koleksiyon varsayılanı: qr-service istekleri Bearer kullanır.",
+          "// staff-site klasöründeki istekler auth'u request seviyesinde 'noauth' + cookie ile override eder."
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth — qr-service (doğrudan)",
+      "item": [
+        {
+          "name": "Staff Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "const access = j.accessToken || j.access_token;",
+                  "const refresh = j.refreshToken || j.refresh_token;",
+                  "if (access) pm.collectionVariables.set('accessToken', access);",
+                  "if (refresh) pm.collectionVariables.set('refreshToken', refresh);",
+                  "function staffIdFromJwt(token) {",
+                  "  if (!token || typeof token !== 'string') return null;",
+                  "  try {",
+                  "    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));",
+                  "    const id = payload.staffId ?? (payload.subjectType === 'STAFF' ? payload.userId : null);",
+                  "    return id != null ? String(id) : null;",
+                  "  } catch (e) { return null; }",
+                  "}",
+                  "const sid = staffIdFromJwt(access);",
+                  "if (sid != null) pm.collectionVariables.set('staffId', String(sid));",
+                  "if (j.merchantId != null) pm.collectionVariables.set('merchantId', String(j.merchantId));",
+                  "if (j.branchId != null) pm.collectionVariables.set('branchId', String(j.branchId));",
+                  "pm.test('Login 2xx', () => pm.response.to.be.success);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantId\": {{merchantId}},\n  \"username\": \"{{username}}\",\n  \"password\": \"{{staffPassword}}\"\n}"
+            },
+            "url": "{{qrApiUrl}}/api/v1/auth/staff/login"
+          }
+        },
+        {
+          "name": "Refresh tokens",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": "{{qrApiUrl}}/api/v1/auth/tokens/refresh"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "const access = j.accessToken || j.access_token;",
+                  "const refresh = j.refreshToken || j.refresh_token;",
+                  "if (access) pm.collectionVariables.set('accessToken', access);",
+                  "if (refresh) pm.collectionVariables.set('refreshToken', refresh);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Revoke (logout)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": "{{qrApiUrl}}/api/v1/auth/tokens/revoke"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth — staff-site (Next proxy)",
+      "item": [
+        {
+          "name": "Staff Login (httpOnly cookies)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-staff-app", "value": "{{staffApp}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantId\": {{merchantId}},\n  \"username\": \"{{username}}\",\n  \"password\": \"{{staffPassword}}\"\n}"
+            },
+            "url": "{{staffSiteUrl}}/api/staff/auth/login"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "if (j.staffId != null) pm.collectionVariables.set('staffId', String(j.staffId));",
+                  "if (j.branchId != null) pm.collectionVariables.set('branchId', String(j.branchId));",
+                  "if (j.merchantId != null) pm.collectionVariables.set('merchantId', String(j.merchantId));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ping (cookies ok?)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "x-staff-app", "value": "{{staffApp}}" }
+            ],
+            "url": "{{staffSiteUrl}}/api/staff/auth/ping"
+          }
+        },
+        {
+          "name": "Refresh (cookies)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "x-staff-app", "value": "{{staffApp}}" }
+            ],
+            "url": "{{staffSiteUrl}}/api/staff/auth/refresh"
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "x-staff-app", "value": "{{staffApp}}" }
+            ],
+            "url": "{{staffSiteUrl}}/api/staff/auth/logout"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Garson — masalar & siparişler (qr-service)",
+      "item": [
+        {
+          "name": "Masalar (branch)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{qrApiUrl}}/merchant/{{merchantId}}/branches/{{branchId}}/tables"
+          }
+        },
+        {
+          "name": "Siparişler — pending",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{qrApiUrl}}/staff/orders/pending"
+          }
+        },
+        {
+          "name": "Siparişler — ready",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{qrApiUrl}}/staff/orders/ready"
+          }
+        },
+        {
+          "name": "Siparişler — today",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{qrApiUrl}}/staff/orders/today"
+          }
+        },
+        {
+          "name": "Masa siparişleri — today",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{qrApiUrl}}/staff/orders/tables/{{tableId}}/today"
+          }
+        },
+        {
+          "name": "Katalog (tableId)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": {
+              "raw": "{{qrApiUrl}}/staff/orders/catalog?tableId={{tableId}}",
+              "host": ["{{qrApiUrl}}"],
+              "path": ["staff", "orders", "catalog"],
+              "query": [{ "key": "tableId", "value": "{{tableId}}" }]
+            }
+          }
+        },
+        {
+          "name": "Sipariş oluştur",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tableId\": {{tableId}},\n  \"items\": [\n    {\n      \"productId\": 1,\n      \"quantity\": 1\n    }\n  ],\n  \"note\": \"Postman test\"\n}"
+            },
+            "url": "{{qrApiUrl}}/staff/orders"
+          }
+        },
+        {
+          "name": "Sipariş — confirm",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{qrApiUrl}}/staff/orders/{{orderId}}/confirm"
+          }
+        },
+        {
+          "name": "Sipariş — reject",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"OTHER\",\n  \"note\": \"Postman\"\n}"
+            },
+            "url": "{{qrApiUrl}}/staff/orders/{{orderId}}/reject"
+          }
+        },
+        {
+          "name": "Sipariş — cancel",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"OTHER\",\n  \"note\": \"Postman\"\n}"
+            },
+            "url": "{{qrApiUrl}}/staff/orders/{{orderId}}/cancel"
+          }
+        },
+        {
+          "name": "Sipariş — GET by id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{qrApiUrl}}/staff/orders/{{orderId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Garson — staff-site proxy",
+      "description": "Önce Auth → staff-site Login. Cookie jar açık olmalı.",
+      "item": [
+        {
+          "name": "Masalar",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "x-staff-app", "value": "{{staffApp}}" }
+            ],
+            "url": "{{staffSiteUrl}}/api/staff/merchant/{{merchantId}}/branches/{{branchId}}/tables"
+          }
+        },
+        {
+          "name": "Siparişler — pending",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "x-staff-app", "value": "{{staffApp}}" }
+            ],
+            "url": "{{staffSiteUrl}}/api/staff/orders/pending"
+          }
+        },
+        {
+          "name": "Siparişler — today",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "x-staff-app", "value": "{{staffApp}}" }
+            ],
+            "url": "{{staffSiteUrl}}/api/staff/orders/today"
+          }
+        },
+        {
+          "name": "Siparişler — ready",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "x-staff-app", "value": "{{staffApp}}" }
+            ],
+            "url": "{{staffSiteUrl}}/api/staff/orders/ready"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Adisyon (bills)",
+      "item": [
+        {
+          "name": "Açık adisyon (masa)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{qrApiUrl}}/staff/bills/tables/{{tableId}}/open"
+          }
+        },
+        {
+          "name": "Adisyon detay",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{qrApiUrl}}/staff/bills/{{billId}}"
+          }
+        },
+        {
+          "name": "Adisyon kapat",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentMethod\": \"CASH\"\n}"
+            },
+            "url": "{{qrApiUrl}}/staff/bills/{{billId}}/close"
+          }
+        },
+        {
+          "name": "Adisyon — staff-site open bill",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "x-staff-app", "value": "{{staffApp}}" }
+            ],
+            "url": "{{staffSiteUrl}}/api/staff/bills/tables/{{tableId}}/open"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Mutfak",
+      "item": [
+        {
+          "name": "Mutfak kuyruğu",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{qrApiUrl}}/staff/kitchen/orders"
+          }
+        },
+        {
+          "name": "Kurye listesi (mutfak)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": {
+              "raw": "{{qrApiUrl}}/staff/kitchen/couriers?branchId={{branchId}}",
+              "host": ["{{qrApiUrl}}"],
+              "path": ["staff", "kitchen", "couriers"],
+              "query": [{ "key": "branchId", "value": "{{branchId}}" }]
+            }
+          }
+        },
+        {
+          "name": "Kuryeye devret",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"courierStaffId\": {{courierStaffId}}\n}"
+            },
+            "url": "{{qrApiUrl}}/staff/kitchen/orders/{{orderId}}/courier-handover"
+          }
+        },
+        {
+          "name": "Mutfak — staff-site kuyruk",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "x-staff-app", "value": "kitchen" }
+            ],
+            "url": "{{staffSiteUrl}}/api/staff/kitchen/orders"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Kurye",
+      "item": [
+        {
+          "name": "Kurye siparişleri",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{qrApiUrl}}/staff/courier/orders"
+          }
+        },
+        {
+          "name": "Kurye — staff-site",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "x-staff-app", "value": "courier" }
+            ],
+            "url": "{{staffSiteUrl}}/api/staff/courier/orders"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Komisyon & kampanya",
+      "item": [
+        {
+          "name": "Komisyon — bugün",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{qrApiUrl}}/staff/commissions/today"
+          }
+        },
+        {
+          "name": "Komisyon — geçmiş",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{qrApiUrl}}/staff/commissions/history"
+          }
+        },
+        {
+          "name": "Aktif kampanyalar",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{qrApiUrl}}/staff/campaigns/active"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Vardiya (ops)",
+      "item": [
+        {
+          "name": "Açık vardiya",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{qrApiUrl}}/staff/ops/shifts/current"
+          }
+        },
+        {
+          "name": "Vardiya aç",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"openingCash\": 0\n}"
+            },
+            "url": "{{qrApiUrl}}/staff/ops/shifts/open"
+          }
+        }
+      ]
+    }
+  ]
+}

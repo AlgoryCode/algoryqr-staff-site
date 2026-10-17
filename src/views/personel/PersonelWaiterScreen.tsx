@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarDays, LayoutGrid, List, LogOut, UtensilsCrossed } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -50,6 +50,8 @@ import {
   rejectWaiterOrder,
   runWaiterFlowAction,
   STAFF_ROLE_LABEL,
+  isStaffProfileComplete,
+  isStaffUpstreamUnavailableError,
   waiterLogout,
   WaiterApiError,
   type WaiterMe,
@@ -130,26 +132,64 @@ export function PersonelWaiterScreen({ me }: { me: WaiterMe }) {
   const [cancelledNow, setCancelledNow] = useState<OrderResponse[]>([]);
   const kitchenEnabled = me.kitchenEnabled === true;
   const courierEnabled = isBranchCourierEnabled(me);
+  const profileReady = isStaffProfileComplete(me);
+
+  function isStaffAuthError(error: unknown): boolean {
+    return (
+      error instanceof WaiterApiError &&
+      (error.message.includes("Oturum gerekli") ||
+        error.message.includes("Garson bulunamadı") ||
+        error.message.includes("Personel bulunamadı") ||
+        error.message.includes("Personel oturumu gerekli"))
+    );
+  }
+
+  function shouldPauseStaffPolling(error: unknown): boolean {
+    return isStaffAuthError(error) || isStaffUpstreamUnavailableError(error);
+  }
+
+  const merchantId = me.merchantId;
+  const branchId = me.branchId;
+  const tablesProfileReady =
+    profileReady && merchantId != null && merchantId > 0 && branchId != null && branchId > 0;
+  const [secondaryQueries, setSecondaryQueries] = useState(false);
+  useEffect(() => {
+    if (!profileReady) {
+      setSecondaryQueries(false);
+      return;
+    }
+    if (tablesProfileReady && !kitchenEnabled) {
+      const afterTables = window.setTimeout(() => setSecondaryQueries(true), 700);
+      return () => window.clearTimeout(afterTables);
+    }
+    const t = window.setTimeout(() => setSecondaryQueries(true), 250);
+    return () => window.clearTimeout(t);
+  }, [profileReady, tablesProfileReady, kitchenEnabled]);
 
   const pendingQuery = useQuery({
     queryKey: ["staff-waiter-pending"],
-    enabled: !kitchenEnabled,
+    enabled: profileReady && secondaryQueries && !kitchenEnabled,
     queryFn: listWaiterPendingOrders,
-    refetchInterval: 6_000,
+    retry: false,
+    refetchInterval: (query) => (shouldPauseStaffPolling(query.state.error) ? false : 6_000),
   });
   const readyQuery = useQuery({
     queryKey: ["staff-waiter-ready"],
-    enabled: !kitchenEnabled,
+    enabled: profileReady && secondaryQueries && !kitchenEnabled,
     queryFn: listWaiterReadyOrders,
-    refetchInterval: 6_000,
+    retry: false,
+    refetchInterval: (query) => (shouldPauseStaffPolling(query.state.error) ? false : 6_000),
   });
   const todayQuery = useQuery({
     queryKey: ["staff-waiter-today"],
+    enabled: profileReady && secondaryQueries,
     queryFn: listWaiterTodayOrders,
-    refetchInterval: 6_000,
+    retry: false,
+    refetchInterval: (query) => (shouldPauseStaffPolling(query.state.error) ? false : 6_000),
   });
   const kitchenQuery = useQuery({
     queryKey: ["staff-kitchen-queue"],
+    enabled: profileReady && secondaryQueries,
     queryFn: async () => {
       try {
         return await listKitchenQueue();
@@ -157,18 +197,20 @@ export function PersonelWaiterScreen({ me }: { me: WaiterMe }) {
         return [] as OrderResponse[];
       }
     },
-    refetchInterval: 6_000,
+    retry: false,
+    refetchInterval: (query) => (shouldPauseStaffPolling(query.state.error) ? false : 6_000),
   });
   const couriersQuery = useQuery({
     queryKey: ["staff-waiter-couriers", me.branchId],
-    enabled: courierEnabled && !kitchenEnabled,
+    enabled: profileReady && courierEnabled && !kitchenEnabled,
     queryFn: () => listWaiterKitchenCouriers(me.branchId),
   });
   const tablesQuery = useQuery({
-    queryKey: ["staff-waiter-tables"],
-    enabled: !kitchenEnabled,
-    queryFn: listWaiterTables,
-    refetchInterval: 6_000,
+    queryKey: ["staff-waiter-tables", merchantId, branchId],
+    enabled: !kitchenEnabled && tablesProfileReady,
+    queryFn: () => listWaiterTables(merchantId!, branchId!),
+    retry: false,
+    refetchInterval: (query) => (shouldPauseStaffPolling(query.state.error) ? false : 6_000),
   });
 
   const refresh = async () => {
@@ -278,10 +320,18 @@ export function PersonelWaiterScreen({ me }: { me: WaiterMe }) {
   }, [selectedAreaKey, tableAreaFilters]);
 
   const error =
+    (tablesQuery.error instanceof WaiterApiError && tablesQuery.error.message) ||
+    (kitchenQuery.error instanceof WaiterApiError && kitchenQuery.error.message) ||
     (pendingQuery.error instanceof WaiterApiError && pendingQuery.error.message) ||
     (readyQuery.error instanceof WaiterApiError && readyQuery.error.message) ||
     (todayQuery.error instanceof WaiterApiError && todayQuery.error.message) ||
     (action.error instanceof Error ? action.error.message : null);
+  const upstreamUnavailable =
+    isStaffUpstreamUnavailableError(tablesQuery.error) ||
+    isStaffUpstreamUnavailableError(kitchenQuery.error) ||
+    isStaffUpstreamUnavailableError(pendingQuery.error) ||
+    isStaffUpstreamUnavailableError(readyQuery.error) ||
+    isStaffUpstreamUnavailableError(todayQuery.error);
   const busyOrderId = action.isPending ? action.variables?.orderId ?? null : null;
 
   const signOut = async () => {
@@ -354,6 +404,30 @@ export function PersonelWaiterScreen({ me }: { me: WaiterMe }) {
       </header>
 
       <main className={shell.main}>
+        {!profileReady ? (
+          <div className="mb-4 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            Profil bilgileri eksik (personel, şube veya işletme). Çıkış yapıp tekrar giriş deneyin.
+          </div>
+        ) : null}
+        {upstreamUnavailable ? (
+          <div className="mb-4 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            {error ?? "qr-service yanıt vermiyor."} IntelliJ / terminalden{" "}
+            <strong>qr-service</strong> (8080) yeniden başlatın; ardından sayfayı yenileyin.
+          </div>
+        ) : null}
+        {error?.includes("Personel oturumu gerekli") || error?.includes("Oturum gerekli") ? (
+          <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
+            Oturum süresi doldu veya qr-service yeniden başlatıldı.{" "}
+            <strong>Çıkış</strong> yapıp garson girişini tekrar deneyin.
+          </div>
+        ) : null}
+        {error?.includes("Garson bulunamadı") || error?.includes("Personel bulunamadı") ? (
+          <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
+            Giriş başarılı ancak API personel kaydınızı tanımıyor (JWT <code className="text-xs">staffId</code> ↔
+            veritabanı). Oturumunuz silinmemeli; yönetici{" "}
+            <code className="text-xs">docs/STAFF_JWT_QR_SERVICE.md</code> kontrol listesine bakmalı.
+          </div>
+        ) : null}
         {tab === "tables" ? (
           <div className="space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
@@ -434,7 +508,11 @@ export function PersonelWaiterScreen({ me }: { me: WaiterMe }) {
               </section>
             ) : null}
 
-            {tablesQuery.isLoading ? (
+            {!tablesProfileReady ? (
+              <p className="text-sm text-destructive">
+                İşletme veya şube bilgisi eksik. Çıkış yapıp tekrar giriş yapın.
+              </p>
+            ) : tablesQuery.isLoading ? (
               <p className="text-sm text-muted-foreground">Masalar yükleniyor…</p>
             ) : branchTables.length === 0 ? (
               <p className="text-sm text-muted-foreground">Bu şubede tanımlı masa yok.</p>
@@ -616,7 +694,7 @@ function WaiterProcessPanel({
             >
               <option value="">Kurye seç</option>
               {couriers.map((courier) => (
-                <option key={courier.id} value={courier.id}>
+                <option key={courier.staffId} value={courier.staffId}>
                   {courier.displayName}
                 </option>
               ))}

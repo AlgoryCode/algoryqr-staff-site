@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 
+import { agentDebugLogServer } from "@/lib/server/agent-debug-log";
 import { handleStaffAuth } from "@/lib/server/staff-auth";
+import { staffAppFromRequest } from "@/lib/server/waiter-auth-cookies";
 import { proxyWaiterAuthenticatedRequest } from "@/lib/server/waiter-authenticated-proxy";
 
 type RouteContext = { params: Promise<{ path?: string[] }> };
@@ -14,7 +16,19 @@ async function proxy(request: Request, method: ProxyMethod, context: RouteContex
   if (path.length === 0) {
     return NextResponse.json({ message: "Not found" }, { status: 404 });
   }
-  return proxyWaiterAuthenticatedRequest(request, `/staff/${key}`, method);
+  const upstreamPath = key.startsWith("merchant/") ? `/${key}` : `/staff/${key}`;
+  if (key.includes("/tables") && key.startsWith("merchant/")) {
+    // #region agent log
+    agentDebugLogServer({
+      hypothesisId: "H5",
+      location: "staff/[[...path]]/route.ts",
+      message: "staff tables route mapped",
+      data: { key, upstreamPath, app: staffAppFromRequest(request), method },
+      runId: "pre-fix",
+    });
+    // #endregion
+  }
+  return proxyWaiterAuthenticatedRequest(request, upstreamPath, method);
 }
 
 export async function GET(request: Request, context: RouteContext) {

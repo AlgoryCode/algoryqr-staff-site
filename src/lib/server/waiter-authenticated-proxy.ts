@@ -1,54 +1,42 @@
-import axios, { AxiosError } from "axios";
+import { AxiosError } from "axios";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { API_BASE_URL, authUrl } from "@/lib/config";
 import {
-  clearStaffAuthCookies,
+  getBranchIdFromAccessToken,
+  getMerchantIdFromAccessToken,
+  getStaffIdFromAccessToken,
+} from "@/lib/auth-user";
+import { API_BASE_URL } from "@/lib/config";
+import { qrServiceAxios, upstreamTimeoutMessage } from "@/lib/server/qr-service-axios";
+import { agentDebugLogServer } from "@/lib/server/agent-debug-log";
+import {
+  refreshStaffTokensDeduped,
+  STAFF_REFRESH_ATTEMPTED_HEADER,
+} from "@/lib/server/staff-token-refresh";
+import {
   readStaffAccessTokenFromCookies,
-  readStaffRefreshTokenFromCookies,
   setStaffAuthCookies,
+  STAFF_APP_HEADER,
   staffAppFromRequest,
-  type StaffApp,
 } from "@/lib/server/waiter-auth-cookies";
 
-type RefreshedWaiterTokens = {
-  accessToken: string;
-  refreshToken?: string;
-  waiterId?: number;
-};
+function upstreamMessageFromData(data: unknown): string | null {
+  if (!data || typeof data !== "object" || !("message" in data)) return null;
+  const message = (data as { message?: unknown }).message;
+  return typeof message === "string" && message.trim() ? message.trim() : null;
+}
 
-async function tryRefreshStaffTokens(app: StaffApp): Promise<RefreshedWaiterTokens | null> {
-  const cookieStore = await cookies();
-  const refreshToken = readStaffRefreshTokenFromCookies(cookieStore, app);
-  if (!refreshToken) return null;
-
-  const upstream = await axios.post<Record<string, unknown>>(
-    authUrl("refresh"),
-    { refreshToken },
-    {
-      headers: { Accept: "application/json", "Content-Type": "application/json" },
-      validateStatus: () => true,
-      timeout: 20_000,
-    },
+/** qr-service returns 401 with a message when JWT is valid but staff/waiter row cannot be resolved. */
+function isStaffBusinessUnauthorized401(message: string | null): boolean {
+  if (!message) return false;
+  const normalized = message.toLocaleLowerCase("tr-TR");
+  return (
+    normalized.includes("garson bulunamadı") ||
+    normalized.includes("personel bulunamadı") ||
+    normalized.includes("personel oturumu gerekli") ||
+    normalized.includes("waiter not found")
   );
-
-  const data = (typeof upstream.data === "object" && upstream.data != null
-    ? upstream.data
-    : {}) as { accessToken?: string; refreshToken?: string; staffId?: number; waiterId?: number };
-
-  if (upstream.status < 200 || upstream.status >= 300) {
-    return null;
-  }
-  if (typeof data.accessToken !== "string" || !data.accessToken) {
-    return null;
-  }
-
-  return {
-    accessToken: data.accessToken,
-    refreshToken: typeof data.refreshToken === "string" ? data.refreshToken : undefined,
-    waiterId: typeof data.staffId === "number" ? data.staffId : typeof data.waiterId === "number" ? data.waiterId : undefined,
-  };
 }
 
 export async function proxyWaiterAuthenticatedRequest(
@@ -63,7 +51,18 @@ export async function proxyWaiterAuthenticatedRequest(
     const cookieStore = await cookies();
     const accessToken = readStaffAccessTokenFromCookies(cookieStore, app);
     if (requireAuth && !accessToken) {
-      return NextResponse.json({ message: "Oturum gerekli" }, { status: 401 });
+      // #region agent log
+      agentDebugLogServer({
+        hypothesisId: "H1",
+        location: "waiter-authenticated-proxy.ts",
+        message: "no staff access cookie",
+        data: { app, upstreamPath, apiBase: API_BASE_URL },
+        runId: "pre-fix",
+      });
+      // #endregion
+      const missing = NextResponse.json({ message: "Oturum gerekli" }, { status: 401 });
+      missing.headers.set(STAFF_REFRESH_ATTEMPTED_HEADER, "1");
+      return missing;
     }
 
     const requestUrl = new URL(request.url);
@@ -85,38 +84,122 @@ export async function proxyWaiterAuthenticatedRequest(
     const forwardedFor = request.headers.get("x-forwarded-for");
     const realIp = request.headers.get("x-real-ip");
 
+    const staffAppHeader = request.headers.get(STAFF_APP_HEADER)?.trim().toLowerCase();
+
+    const upstreamUrl = `${API_BASE_URL}${upstreamPath}${query}`;
+
     const doRequest = (token: string | null) =>
-      axios.request({
-        url: `${API_BASE_URL}${upstreamPath}${query}`,
+      qrServiceAxios.request({
+        url: upstreamUrl,
         method,
         data,
         headers: {
           Accept: "application/json",
           ...(writesJson ? { "Content-Type": "application/json" } : {}),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(staffAppHeader ? { [STAFF_APP_HEADER]: staffAppHeader } : {}),
           ...(forwardedFor ? { "X-Forwarded-For": forwardedFor } : {}),
           ...(!forwardedFor && realIp ? { "X-Forwarded-For": realIp } : {}),
         },
-        validateStatus: () => true,
-        timeout: 20_000,
       });
 
+    if (upstreamPath.includes("/branches/") && upstreamPath.endsWith("/tables")) {
+      // #region agent log
+      agentDebugLogServer({
+        hypothesisId: "H4",
+        location: "waiter-authenticated-proxy.ts",
+        message: "branch tables proxy request",
+        data: {
+          app,
+          upstreamPath,
+          tokenMerchantId: getMerchantIdFromAccessToken(accessToken),
+          tokenBranchId: getBranchIdFromAccessToken(accessToken),
+          tokenStaffId: getStaffIdFromAccessToken(accessToken),
+          hadAccessToken: Boolean(accessToken),
+        },
+        runId: "pre-fix",
+      });
+      // #endregion
+    }
+
     let upstream = await doRequest(accessToken);
-    let refreshedTokens: RefreshedWaiterTokens | null = null;
+    let refreshedTokens = null as Awaited<ReturnType<typeof refreshStaffTokensDeduped>>;
+    let refreshAttempted = false;
 
     if (upstream.status === 401 && requireAuth) {
-      refreshedTokens = await tryRefreshStaffTokens(app);
+      const business401 = isStaffBusinessUnauthorized401(upstreamMessageFromData(upstream.data));
+      if (business401) {
+        // #region agent log
+        agentDebugLogServer({
+          hypothesisId: "H13",
+          location: "waiter-authenticated-proxy.ts",
+          message: "business 401 skip token refresh",
+          data: {
+            app,
+            upstreamPath,
+            upstreamMessage: upstreamMessageFromData(upstream.data),
+            tokenStaffId: getStaffIdFromAccessToken(accessToken),
+          },
+          runId: "post-fix-3",
+        });
+        // #endregion
+        const businessUnauthorized = NextResponse.json(upstream.data ?? { message: "Yetkisiz" }, {
+          status: 401,
+        });
+        // Token may still be valid; tell the browser not to call /api/staff/auth/refresh.
+        businessUnauthorized.headers.set(STAFF_REFRESH_ATTEMPTED_HEADER, "1");
+        return businessUnauthorized;
+      }
+      refreshAttempted = true;
+      refreshedTokens = await refreshStaffTokensDeduped(app);
       if (refreshedTokens) {
         upstream = await doRequest(refreshedTokens.accessToken);
       }
     }
 
     if (upstream.status === 401 && requireAuth) {
-      const response = NextResponse.json(upstream.data ?? { message: "Oturum gerekli" }, {
+      const upstreamMessage = upstreamMessageFromData(upstream.data);
+      // #region agent log
+      agentDebugLogServer({
+        hypothesisId: "H3",
+        location: "waiter-authenticated-proxy.ts",
+        message: "upstream 401 (cookies kept)",
+        data: {
+          app,
+          upstreamPath,
+          hadAccessToken: Boolean(accessToken),
+          refreshAttempted,
+          refreshSucceeded: Boolean(refreshedTokens),
+          upstreamMessage,
+        },
+        runId: "post-fix-3",
+      });
+      // #endregion
+      const unauthorized = NextResponse.json(upstream.data ?? { message: "Oturum gerekli" }, {
         status: 401,
       });
-      clearStaffAuthCookies(response, app);
-      return response;
+      if (refreshAttempted) {
+        unauthorized.headers.set(STAFF_REFRESH_ATTEMPTED_HEADER, "1");
+      }
+      if (refreshedTokens) {
+        setStaffAuthCookies(
+          unauthorized,
+          app,
+          refreshedTokens.accessToken,
+          refreshedTokens.refreshToken,
+          refreshedTokens.staffId,
+        );
+        // #region agent log
+        agentDebugLogServer({
+          hypothesisId: "H15",
+          location: "waiter-authenticated-proxy.ts",
+          message: "persisted refreshed tokens on 401 response",
+          data: { app, upstreamPath, staffId: refreshedTokens.staffId ?? null },
+          runId: "post-fix-5",
+        });
+        // #endregion
+      }
+      return unauthorized;
     }
 
     const response =
@@ -124,13 +207,35 @@ export async function proxyWaiterAuthenticatedRequest(
         ? new NextResponse(null, { status: upstream.status })
         : NextResponse.json(upstream.data, { status: upstream.status });
 
+    if (
+      upstreamPath.includes("/branches/") &&
+      upstreamPath.endsWith("/tables") &&
+      upstream.status >= 200 &&
+      upstream.status < 300
+    ) {
+      // #region agent log
+      agentDebugLogServer({
+        hypothesisId: "H3",
+        location: "waiter-authenticated-proxy.ts",
+        message: "branch tables proxy ok",
+        data: {
+          app,
+          upstreamPath,
+          status: upstream.status,
+          tokenStaffId: getStaffIdFromAccessToken(refreshedTokens?.accessToken ?? accessToken),
+        },
+        runId: "post-fix",
+      });
+      // #endregion
+    }
+
     if (refreshedTokens) {
       setStaffAuthCookies(
         response as NextResponse,
         app,
         refreshedTokens.accessToken,
         refreshedTokens.refreshToken,
-        refreshedTokens.waiterId,
+        refreshedTokens.staffId,
       );
     }
 
@@ -138,12 +243,37 @@ export async function proxyWaiterAuthenticatedRequest(
   } catch (error) {
     if (error instanceof AxiosError) {
       if (error.code === "ECONNABORTED") {
-        return NextResponse.json({ message: "Gateway timeout" }, { status: 504 });
+        agentDebugLogServer({
+          hypothesisId: "H17",
+          location: "waiter-authenticated-proxy.ts",
+          message: "upstream timeout",
+          data: { upstreamPath, apiBase: API_BASE_URL },
+          runId: "post-fix-7",
+        });
+        return NextResponse.json(upstreamTimeoutMessage(`${API_BASE_URL}${upstreamPath}`), { status: 504 });
       }
       if (error.response) {
         return NextResponse.json(error.response.data ?? {}, { status: error.response.status });
       }
     }
+
+    const isDev = process.env.NODE_ENV !== "production";
+    const target = `${API_BASE_URL}${upstreamPath}`;
+    if (isDev) {
+      const code = error instanceof AxiosError ? error.code : undefined;
+      const refused = code === "ECONNREFUSED" || code === "ENOTFOUND";
+      return NextResponse.json(
+        {
+          message: refused
+            ? "qr-service'e bağlanılamadı. API_BASE_URL'in qr-service SERVER_PORT ile aynı olduğundan emin olun."
+            : "Sunucu hatası",
+          code,
+          target,
+        },
+        { status: 500 },
+      );
+    }
+
     return NextResponse.json({ message: "Sunucu hatası" }, { status: 500 });
   }
 }

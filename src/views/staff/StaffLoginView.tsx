@@ -9,23 +9,45 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  clearStaffProfile,
+  loadStaffSession,
   parseStaffRole,
+  staffMeFromAccessToken,
+  pingStaffAuthCookies,
   rememberStaffApp,
-  resolveStaffSession,
+  rememberStaffProfile,
+  STAFF_APP_HEADER,
+  STAFF_ROLE_LABEL,
   staffAppForRole,
+  staffAppMismatchMessage,
   staffHomePath,
+  staffRoleFromPath,
+  staffRoleMatchesApp,
+  waiterLogout,
+  type StaffRole,
+  type WaiterMe,
 } from "@/lib/waiter-api";
 
 const DASHBOARD_LOGIN_URL = `${(
   process.env.NEXT_PUBLIC_DASHBOARD_ORIGIN || "http://localhost:3000"
 ).replace(/\/$/, "")}/login`;
 
+const LOGIN_ROLES: StaffRole[] = ["WAITER", "KITCHEN", "COURIER"];
+
 type StaffLoginViewProps = {
-  onAuthenticated?: () => void;
+  defaultExpectedRole?: StaffRole;
+  onAuthenticated?: (me: WaiterMe) => void;
 };
 
-export default function StaffLoginView({ onAuthenticated }: StaffLoginViewProps) {
+export default function StaffLoginView({ defaultExpectedRole, onAuthenticated }: StaffLoginViewProps) {
   const router = useRouter();
+  const [expectedRole, setExpectedRole] = useState<StaffRole>(() => {
+    if (defaultExpectedRole) return defaultExpectedRole;
+    if (typeof window !== "undefined") {
+      return staffRoleFromPath(window.location.pathname) ?? "WAITER";
+    }
+    return "WAITER";
+  });
   const [merchantId, setMerchantId] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -34,28 +56,26 @@ export default function StaffLoginView({ onAuthenticated }: StaffLoginViewProps)
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const session = await resolveStaffSession();
-        if (cancelled) return;
-        if (session) {
-          if (onAuthenticated) {
-            onAuthenticated();
-          } else {
-            router.replace(staffHomePath(parseStaffRole(session.me.staffRole)));
-          }
-          return;
-        }
-      } catch {
-        // Oturum yok.
+    void (async () => {
+      const session = loadStaffSession();
+      if (!session) {
+        setChecking(false);
+        return;
       }
-      if (!cancelled) setChecking(false);
+      const role = parseStaffRole(session.me.staffRole);
+      const cookiesOk = await pingStaffAuthCookies(staffAppForRole(role));
+      if (!cookiesOk) {
+        clearStaffProfile();
+        setChecking(false);
+        return;
+      }
+      if (onAuthenticated) {
+        onAuthenticated(session.me);
+      } else {
+        router.replace(staffHomePath(role));
+      }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [router]);
+  }, [onAuthenticated, router]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -65,32 +85,64 @@ export default function StaffLoginView({ onAuthenticated }: StaffLoginViewProps)
       setError("İşletme ID sayı olmalı");
       return;
     }
+    const app = staffAppForRole(expectedRole);
     setLoading(true);
     try {
       const response = await fetch("/api/staff/auth/login", {
         method: "POST",
         credentials: "same-origin",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          [STAFF_APP_HEADER]: app,
+        },
         body: JSON.stringify({
           merchantId: Number(merchant),
           username: username.trim(),
           password,
         }),
       });
-      const data = (await response.json().catch(() => ({}))) as {
+      const data = (await response.json().catch(() => ({}))) as Record<string, unknown> & {
         message?: string;
-        staffRole?: string;
       };
       if (!response.ok) {
-        setError(data.message || "Giriş başarısız");
+        setError(typeof data.message === "string" ? data.message : "Giriş başarısız");
         return;
       }
-      const role = parseStaffRole(data.staffRole);
-      rememberStaffApp(staffAppForRole(role));
+      const accessToken =
+        typeof data.accessToken === "string"
+          ? data.accessToken
+          : typeof data.access_token === "string"
+            ? data.access_token
+            : "";
+      if (!accessToken) {
+        setError("Access token alınamadı");
+        return;
+      }
+      const me = staffMeFromAccessToken(accessToken);
+      if (!me) {
+        setError("Personel bilgileri access token içinde eksik (staffId, merchantId, branchId)");
+        return;
+      }
+      const actual = parseStaffRole(me.staffRole);
+      if (!staffRoleMatchesApp(actual, expectedRole)) {
+        await waiterLogout(app);
+        clearStaffProfile();
+        setError(staffAppMismatchMessage(expectedRole, actual));
+        return;
+      }
+      rememberStaffProfile(me);
+      rememberStaffApp(app);
+      const cookiesOk = await pingStaffAuthCookies(app);
+      if (!cookiesOk) {
+        clearStaffProfile();
+        setError("Oturum çerezleri oluşturulamadı. Çerez engelini kapatıp tekrar deneyin.");
+        return;
+      }
       if (onAuthenticated) {
-        onAuthenticated();
+        onAuthenticated(me);
       } else {
-        router.replace(staffHomePath(role));
+        router.replace(staffHomePath(actual));
       }
     } catch {
       setError("Giriş yapılamadı");
@@ -112,7 +164,7 @@ export default function StaffLoginView({ onAuthenticated }: StaffLoginViewProps)
           <div className="space-y-2 text-center">
             <h1 className="text-2xl font-bold">Personel girişi</h1>
             <p className="text-sm text-muted-foreground">
-              İşletme ID, kullanıcı adı ve şifre ile girin. Rolünüze göre personel paneli açılır.
+              Önce giriş türünü seçin, ardından işletme ID ve hesap bilgilerinizle girin.
             </p>
           </div>
           {checking ? (
@@ -121,6 +173,22 @@ export default function StaffLoginView({ onAuthenticated }: StaffLoginViewProps)
             </div>
           ) : (
             <form className="space-y-4" onSubmit={(event) => void submit(event)}>
+              <div className="space-y-2">
+                <Label>Giriş türü</Label>
+                <div className="grid grid-cols-3 gap-2">
+                  {LOGIN_ROLES.map((role) => (
+                    <Button
+                      key={role}
+                      type="button"
+                      variant={expectedRole === role ? "default" : "outline"}
+                      className="h-10 px-2 text-xs sm:text-sm"
+                      onClick={() => setExpectedRole(role)}
+                    >
+                      {STAFF_ROLE_LABEL[role]}
+                    </Button>
+                  ))}
+                </div>
+              </div>
               <div className="space-y-1.5">
                 <Label htmlFor="staff-merchant-id">İşletme ID</Label>
                 <Input

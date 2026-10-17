@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 
-import { parseStaffRole, resolveStaffSession, type WaiterMe } from "@/lib/waiter-api";
+import { loadStaffSession, parseStaffRole, type WaiterMe } from "@/lib/waiter-api";
 
 import StaffCourierView from "@/views/staff/StaffCourierView";
 import StaffKitchenView from "@/views/staff/StaffKitchenView";
@@ -15,17 +15,8 @@ export default function PersonelApp() {
   const [me, setMe] = useState<WaiterMe | null | undefined>(undefined);
 
   useEffect(() => {
-    let cancelled = false;
-    resolveStaffSession()
-      .then((session) => {
-        if (!cancelled) setMe(session?.me ?? null);
-      })
-      .catch(() => {
-        if (!cancelled) setMe(null);
-      });
-    return () => {
-      cancelled = true;
-    };
+    const session = loadStaffSession();
+    setMe(session?.me ?? null);
   }, []);
 
   if (me === undefined) {
@@ -37,15 +28,7 @@ export default function PersonelApp() {
   }
 
   if (me === null) {
-    return (
-      <StaffLoginView
-        onAuthenticated={() => {
-          void resolveStaffSession().then((session) => {
-            setMe(session?.me ?? null);
-          });
-        }}
-      />
-    );
+    return <StaffLoginView onAuthenticated={setMe} />;
   }
 
   const role = parseStaffRole(me.staffRole);

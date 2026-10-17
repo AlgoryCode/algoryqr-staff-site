@@ -95,6 +95,7 @@ export type OrderResponse = {
   currency?: string | null;
   note?: string | null;
   staffId?: number | null;
+  /** @deprecated qr-service artık `staffId` kullanır; okuma için `resolveOrderStaffId` tercih edin. */
   waiterId?: number | null;
   waiterName?: string | null;
   waiterNote?: string | null;
@@ -116,6 +117,14 @@ export type OrderResponse = {
   updatedAt?: string | null;
   campaignSummary?: OrderCampaignSummary | null;
 };
+
+/** Siparişteki personel kimliği (garson/mutfak); eski API alanı `waiterId` geriye dönük okunur. */
+export function resolveOrderStaffId(
+  order: Pick<OrderResponse, "staffId" | "waiterId">,
+): number | null {
+  const id = order.staffId ?? order.waiterId;
+  return id != null && id > 0 ? id : null;
+}
 
 export type CartItemRequest = {
   productId: number;

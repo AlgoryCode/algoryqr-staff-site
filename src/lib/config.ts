@@ -20,25 +20,33 @@ function resolveApiBaseUrl(): string {
   if (deployEnv === "stage" || deployEnv === "staging") return STAGE_API_BASE;
   if (deployEnv === "prod" || deployEnv === "production") return PROD_API_BASE;
 
-  try {
-    const appUrl = readRuntimeEnv("APP_URL") || readRuntimeEnv("NEXT_PUBLIC_APP_URL");
-    if (appUrl) {
-      const host = new URL(appUrl).hostname.toLowerCase();
-      if (host.includes("stage.")) return STAGE_API_BASE;
-      if (
-        host.includes("prod.") ||
-        host === "qr.algorycode.com" ||
-        host === "staff.algorycode.com" ||
-        host.endsWith(".algorycode.com")
-      ) {
-        return PROD_API_BASE;
+  // Only infer cloud API from APP_URL on production deploys — local dev must not
+  // follow APP_URL when it points at staff.algorycode.com while qr-service runs locally.
+  const productionDeploy =
+    deployEnv === "prod" ||
+    deployEnv === "production" ||
+    (process.env.NODE_ENV === "production" && deployEnv !== "development" && deployEnv !== "dev");
+  if (productionDeploy) {
+    try {
+      const appUrl = readRuntimeEnv("APP_URL") || readRuntimeEnv("NEXT_PUBLIC_APP_URL");
+      if (appUrl) {
+        const host = new URL(appUrl).hostname.toLowerCase();
+        if (host.includes("stage.")) return STAGE_API_BASE;
+        if (
+          host.includes("prod.") ||
+          host === "qr.algorycode.com" ||
+          host === "staff.algorycode.com" ||
+          host.endsWith(".algorycode.com")
+        ) {
+          return PROD_API_BASE;
+        }
       }
+    } catch {
+      // ignore
     }
-  } catch {
-    // ignore
   }
 
-  if (typeof window !== "undefined" || process.env.NODE_ENV !== "production") return "http://localhost:8055";
+  if (typeof window !== "undefined" || process.env.NODE_ENV !== "production") return "http://localhost:8080";
   if (process.env["NEXT_PHASE"] === "phase-production-build") return STAGE_API_BASE;
   throw new Error("API_BASE_URL is required");
 }

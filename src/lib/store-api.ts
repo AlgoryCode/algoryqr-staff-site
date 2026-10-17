@@ -164,7 +164,7 @@ export type StoreOrderDetail = StoreOrderSummary & {
   subtotal: number;
   deliveryFee: number;
   discountAmount: number;
-  courierStaff?: { id: number; displayName?: string | null } | null;
+  courierStaff?: { staffId?: number; id?: number; displayName?: string | null } | null;
   items: StoreOrderItem[];
   history: {
     fromStatus?: StoreOrderStatus | null;

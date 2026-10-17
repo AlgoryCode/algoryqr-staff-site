@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import {
+  loadStaffSession,
   parseStaffRole,
-  resolveStaffSession,
+  STAFF_GATE_PATH,
   staffHomePath,
   staffRoleMatchesApp,
   type StaffRole,
@@ -17,27 +18,17 @@ export function useStaffSession(expected: StaffRole) {
   const [me, setMe] = useState<WaiterMe | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    resolveStaffSession()
-      .then((session) => {
-        if (cancelled) return;
-        if (!session) {
-          router.replace("/");
-          return;
-        }
-        const role = parseStaffRole(session.me.staffRole);
-        if (!staffRoleMatchesApp(role, expected)) {
-          router.replace(staffHomePath(role));
-          return;
-        }
-        setMe(session.me);
-      })
-      .catch(() => {
-        if (!cancelled) router.replace("/");
-      });
-    return () => {
-      cancelled = true;
-    };
+    const session = loadStaffSession();
+    if (!session) {
+      router.replace(STAFF_GATE_PATH);
+      return;
+    }
+    const role = parseStaffRole(session.me.staffRole);
+    if (!staffRoleMatchesApp(role, expected)) {
+      router.replace(staffHomePath(role));
+      return;
+    }
+    setMe(session.me);
   }, [expected, router]);
 
   return me;
