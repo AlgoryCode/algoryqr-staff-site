@@ -117,7 +117,7 @@ export type WaiterBill = {
   menuId?: number;
   tableId: number;
   tableName?: string | null;
-  status?: "OPEN" | "CLOSED";
+  status?: "OPEN" | "CLOSED" | "CANCELLED";
   openedByWaiterId?: number | null;
   closedByWaiterId?: number | null;
   openedAt?: string | null;
@@ -719,10 +719,25 @@ export async function listWaiterCatalog(tableId: number): Promise<WaiterCatalogR
     throw new WaiterApiError(response.status, data.message || "Menü alınamadı");
   }
   return {
-    products: Array.isArray(data.products) ? data.products : [],
+    products: Array.isArray(data.products) ? data.products.map(normalizeCatalogProduct) : [],
     commissionEnabled: data.commissionEnabled,
     commissionType: data.commissionType,
     commissionValue: data.commissionValue,
+  };
+}
+
+function normalizeCatalogProduct(product: WaiterCatalogProduct): WaiterCatalogProduct {
+  const raw = product as WaiterCatalogProduct & {
+    image?: string | null;
+    photoUrl?: string | null;
+    thumbnailUrl?: string | null;
+  };
+  const image = [raw.imageUrl, raw.image, raw.photoUrl, raw.thumbnailUrl].find(
+    (value) => typeof value === "string" && value.trim().length > 0,
+  );
+  return {
+    ...product,
+    imageUrl: typeof image === "string" ? image.trim() : null,
   };
 }
 
@@ -1102,12 +1117,14 @@ export function staffAppForRole(staffRole?: StaffRole | null): StaffApp {
 
 /* ── Waiter bills ── */
 
-export async function getWaiterOpenBill(tableId: number): Promise<WaiterBill> {
-  const response = await waiterFetch(`/api/staff/bills/tables/${tableId}/open`, {
+/** Returns null when the table has no open bill (204). */
+export async function getWaiterOpenBill(tableId: number): Promise<WaiterBill | null> {
+  const response = await waiterFetch(`/api/staff/tables/${tableId}/bill`, {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
   });
+  if (response.status === 204) return null;
   const data = await parseJson<WaiterBill & { message?: string }>(response);
   if (!response.ok) {
     throw new WaiterApiError(response.status, data.message || "Adisyon alınamadı");
@@ -1133,7 +1150,7 @@ export async function addWaiterBillItems(
   items: CartItemRequest[],
 ): Promise<WaiterBill> {
   const response = await waiterFetch(`/api/staff/bills/${billId}/items`, {
-    method: "PUT",
+    method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",
     body: JSON.stringify({ items }),
@@ -1151,7 +1168,7 @@ export async function updateWaiterBillItemQuantity(
   quantity: number,
 ): Promise<WaiterBill> {
   const response = await waiterFetch(`/api/staff/bills/${billId}/items/${itemId}`, {
-    method: "PUT",
+    method: "PATCH",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",
     body: JSON.stringify({ quantity }),
@@ -1185,7 +1202,7 @@ export async function payWaiterBillItems(
     tipAmount?: number;
   },
 ): Promise<WaiterBill> {
-  const response = await waiterFetch(`/api/staff/bills/${billId}/pay-items`, {
+  const response = await waiterFetch(`/api/staff/bills/${billId}/payments/items`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",
@@ -1219,7 +1236,7 @@ export async function getWaiterBillSplitPreview(
   personCount: number,
 ): Promise<WaiterSplitPreview> {
   const response = await waiterFetch(
-    `/api/staff/bills/${billId}/split-preview?personCount=${personCount}`,
+    `/api/staff/bills/${billId}/split?personCount=${personCount}`,
     {
       method: "GET",
       headers: { Accept: "application/json" },
@@ -1243,7 +1260,7 @@ export async function payWaiterBillShare(
     tipAmount?: number;
   },
 ): Promise<WaiterBill> {
-  const response = await waiterFetch(`/api/staff/bills/${billId}/pay-share`, {
+  const response = await waiterFetch(`/api/staff/bills/${billId}/payments/share`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",
@@ -1273,6 +1290,23 @@ export async function closeWaiterBill(
   const data = await parseJson<WaiterBill & { message?: string }>(response);
   if (!response.ok) {
     throw new WaiterApiError(response.status, data.message || "Masa kapatılamadı");
+  }
+  return data;
+}
+
+export async function cancelWaiterBill(
+  billId: number,
+  request?: OrderCancelRequest,
+): Promise<WaiterBill> {
+  const response = await waiterFetch(`/api/staff/bills/${billId}/cancel`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify(request ?? { reason: "OTHER" }),
+  });
+  const data = await parseJson<WaiterBill & { message?: string }>(response);
+  if (!response.ok) {
+    throw new WaiterApiError(response.status, data.message || "Adisyon iptal edilemedi");
   }
   return data;
 }

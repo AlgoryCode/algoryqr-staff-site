@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { BrandLogo } from "@/components/BrandLogo";
 import { OrderCancelDialog } from "@/components/orders/OrderCancelDialog";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ordersForStaffBranch } from "@/lib/branch-scope";
 import { formatBranchCode, isBranchCourierEnabled } from "@/lib/branch";
 import { formatKitchenElapsed, kitchenOrderOrigin } from "@/lib/kitchen-queue";
@@ -32,11 +33,12 @@ import {
   filterWaiterShiftBoard,
   groupWaiterShift,
   rememberWaiterDelivery,
-  tableIdsAwaitingPayment,
   type WaiterShiftBoard,
 } from "@/lib/waiter-board";
 import {
+  cancelWaiterBill,
   cancelWaiterOrder,
+  getWaiterOpenBill,
   confirmWaiterOrder,
   handoverKitchenOrderToCourier,
   listKitchenQueue,
@@ -58,6 +60,7 @@ import {
   type WaiterTableSummary,
 } from "@/lib/waiter-api";
 
+import { WaiterAddOrderSheet } from "@/views/personel/WaiterAddOrderSheet";
 import { StaffOrderBillSheet } from "@/views/staff/StaffOrderBillSheet";
 
 type WaiterTab = "tables" | "reservations";
@@ -83,10 +86,8 @@ const shell = {
   orderCard: "rounded-xl border border-border bg-background/80 p-3",
   tableTile:
     "flex h-12 w-full items-center justify-center rounded-lg border px-1 text-[10px] font-semibold leading-tight shadow-sm transition-colors min-[400px]:h-14 min-[400px]:px-1.5 min-[400px]:text-[11px] sm:h-16 sm:px-2 sm:text-xs md:h-[4.5rem] md:rounded-xl md:border-2 md:px-3 md:text-sm",
-  tableTileUnpaid:
-    "animate-pulse border-red-800/80 bg-red-500 text-white enabled:hover:bg-red-600",
-  tableTilePaid: "border-emerald-800/50 bg-emerald-200 text-emerald-950 enabled:hover:bg-emerald-300",
-  tableTileIdle: "border-border bg-muted/40 text-foreground enabled:hover:bg-muted/70",
+  tableTileOccupied: "border-red-800/80 bg-red-500 text-white enabled:hover:bg-red-600",
+  tableTileEmpty: "border-emerald-700/40 bg-emerald-200 text-emerald-950 enabled:hover:bg-emerald-300",
   areaBadge:
     "shrink-0 rounded-full border border-border bg-background px-3.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors",
   areaBadgeActive: "border-primary bg-primary text-primary-foreground shadow-sm",
@@ -128,6 +129,9 @@ export function PersonelWaiterScreen({ me }: { me: WaiterMe }) {
   const [tableLayout, setTableLayout] = useState<TableLayout>("grid");
   const [selectedAreaKey, setSelectedAreaKey] = useState<"all" | string>("all");
   const [billOrder, setBillOrder] = useState<OrderResponse | null>(null);
+  const [orderTable, setOrderTable] = useState<WaiterTableSummary | null>(null);
+  const [cancelTable, setCancelTable] = useState<WaiterTableSummary | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
   const [servedNow, setServedNow] = useState<OrderResponse[]>([]);
   const [cancelledNow, setCancelledNow] = useState<OrderResponse[]>([]);
   const kitchenEnabled = me.kitchenEnabled === true;
@@ -294,11 +298,6 @@ export function PersonelWaiterScreen({ me }: { me: WaiterMe }) {
     todayQuery.data,
   ]);
 
-  const awaitingPaymentIds = useMemo(
-    () => tableIdsAwaitingPayment(tablesQuery.data ?? []),
-    [tablesQuery.data],
-  );
-
   const branchTables = useMemo(() => {
     const rows = tablesQuery.data ?? [];
     return [...rows].sort((a, b) => {
@@ -339,6 +338,22 @@ export function PersonelWaiterScreen({ me }: { me: WaiterMe }) {
     router.replace("/");
     router.refresh();
   };
+
+  const cancelBill = useMutation({
+    mutationFn: async ({ table, request }: { table: WaiterTableSummary; request: OrderCancelRequest }) => {
+      const billId = table.openBillId ?? (await getWaiterOpenBill(table.tableId))?.id;
+      if (billId == null) throw new WaiterApiError(404, "Açık adisyon yok");
+      return cancelWaiterBill(billId, request);
+    },
+    onSuccess: () => {
+      setCancelTable(null);
+      setCancelError(null);
+      void refresh();
+    },
+    onError: (error) => {
+      setCancelError(error instanceof WaiterApiError ? error.message : "Adisyon iptal edilemedi");
+    },
+  });
 
   const openBillForTable = (table: WaiterTableSummary) => {
     setBillOrder(orderFromTable(table));
@@ -527,36 +542,44 @@ export function PersonelWaiterScreen({ me }: { me: WaiterMe }) {
                       <ul className="grid grid-cols-3 gap-1.5 min-[400px]:grid-cols-4 min-[400px]:gap-2 sm:gap-2.5 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-4 xl:gap-3">
                         {area.tables.map((table) => (
                           <li key={table.tableId}>
-                            <button
-                              type="button"
-                              className={tableTileClass(table, awaitingPaymentIds)}
-                              onClick={() => openBillForTable(table)}
+                            <TableActionPopover
+                              table={table}
+                              onBill={openBillForTable}
+                              onAddOrder={setOrderTable}
+                              onCancelBill={setCancelTable}
                             >
-                              <span className="truncate">
-                                {table.tableName || `Masa ${table.tableNumber ?? table.tableId}`}
-                              </span>
-                            </button>
+                              <button type="button" className={tableTileClass(table)}>
+                                <span className="truncate">
+                                  {table.tableName || `Masa ${table.tableNumber ?? table.tableId}`}
+                                </span>
+                              </button>
+                            </TableActionPopover>
                           </li>
                         ))}
                       </ul>
                     ) : (
                       <ul className="space-y-2">
-                        {area.tables.map((table) => (
-                          <li key={table.tableId}>
+                        {area.tables.map((table) => {
+                          const occupied = tableHasOpenBill(table);
+                          return (
+                            <li key={table.tableId}>
+                            <TableActionPopover
+                              table={table}
+                              onBill={openBillForTable}
+                              onAddOrder={setOrderTable}
+                              onCancelBill={setCancelTable}
+                            >
                             <button
                               type="button"
-                              className={`flex w-full items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 text-left shadow-sm transition-colors hover:bg-muted/40 ${
-                                awaitingPaymentIds.has(table.tableId) ? "border-red-300/80 bg-red-50/80" : ""
+                              className={`flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left shadow-sm transition-colors ${
+                                occupied
+                                  ? "border-red-800/80 bg-red-500 text-white hover:bg-red-600"
+                                  : "border-emerald-700/40 bg-emerald-200 text-emerald-950 hover:bg-emerald-300"
                               }`}
-                              onClick={() => openBillForTable(table)}
                             >
                               <span
                                 className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-sm font-bold ${
-                                  awaitingPaymentIds.has(table.tableId)
-                                    ? "animate-pulse bg-red-500 text-white"
-                                    : table.billStatus === "OPEN"
-                                      ? "bg-amber-200 text-amber-950"
-                                      : "bg-muted text-foreground"
+                                  occupied ? "bg-red-700 text-white" : "bg-emerald-100 text-emerald-950"
                                 }`}
                               >
                                 {table.tableNumber ?? "·"}
@@ -565,18 +588,18 @@ export function PersonelWaiterScreen({ me }: { me: WaiterMe }) {
                                 <p className="truncate text-sm font-semibold">
                                   {table.tableName || `Masa ${table.tableNumber ?? table.tableId}`}
                                 </p>
-                                <p className="truncate text-xs text-muted-foreground">{tableStatusLabel(table)}</p>
+                                <p className={`truncate text-xs ${occupied ? "text-red-50" : "text-emerald-900"}`}>
+                                  {tableStatusLabel(table)}
+                                </p>
                               </div>
-                              <span className="text-xs tabular-nums text-muted-foreground">
-                                {table.pendingOrderCount + (table.readyOrderCount ?? 0) > 0
-                                  ? `${table.pendingOrderCount + (table.readyOrderCount ?? 0)} sipariş`
-                                  : table.openBillTotal != null
-                                    ? `${table.openBillTotal} ₺`
-                                    : ""}
+                              <span className={`text-xs tabular-nums ${occupied ? "text-red-50" : "text-emerald-900"}`}>
+                                {table.openBillTotal != null ? `${table.openBillTotal} ₺` : ""}
                               </span>
                             </button>
-                          </li>
-                        ))}
+                            </TableActionPopover>
+                            </li>
+                          );
+                        })}
                       </ul>
                     )}
                   </section>
@@ -626,6 +649,37 @@ export function PersonelWaiterScreen({ me }: { me: WaiterMe }) {
           if (!next) setBillOrder(null);
         }}
         onBillUpdated={() => void refresh()}
+      />
+      <OrderCancelDialog
+        open={cancelTable != null}
+        title="Adisyonu iptal et"
+        confirmLabel="Adisyonu iptal et"
+        subject={cancelTable ? tableLabel(cancelTable) : null}
+        description="Açık adisyon ve bağlı siparişler iptal edilir. Ödeme alınmışsa iptal edilmez."
+        error={cancelError}
+        busy={cancelBill.isPending}
+        onOpenChange={(next) => {
+          if (!next && !cancelBill.isPending) {
+            setCancelTable(null);
+            setCancelError(null);
+          }
+        }}
+        onConfirm={(request) => {
+          if (!cancelTable) return;
+          setCancelError(null);
+          cancelBill.mutate({ table: cancelTable, request });
+        }}
+      />
+      <WaiterAddOrderSheet
+        table={orderTable}
+        open={orderTable != null}
+        onOpenChange={(next) => {
+          if (!next) setOrderTable(null);
+        }}
+        onCreated={(table) => {
+          setOrderTable(null);
+          void refresh().finally(() => openBillForTable(table));
+        }}
       />
     </div>
   );
@@ -1001,25 +1055,85 @@ function OrderItems({ order }: { order: OrderResponse }) {
   );
 }
 
-function tableTileClass(table: WaiterTableSummary, awaitingPaymentIds: ReadonlySet<number>): string {
-  if (awaitingPaymentIds.has(table.tableId)) {
-    return `${shell.tableTile} ${shell.tableTileUnpaid}`;
-  }
-  const busy =
-    (table.pendingOrderCount ?? 0) > 0 ||
-    (table.readyOrderCount ?? 0) > 0 ||
-    (table.kitchenOrderCount ?? 0) > 0;
-  if (busy) {
-    return `${shell.tableTile} ${shell.tableTileIdle}`;
-  }
-  return `${shell.tableTile} ${shell.tableTilePaid}`;
+function tableLabel(table: WaiterTableSummary): string {
+  return table.tableName?.trim() || `Masa ${table.tableNumber ?? table.tableId}`;
+}
+
+function TableActionPopover({
+  table,
+  onBill,
+  onAddOrder,
+  onCancelBill,
+  children,
+}: {
+  table: WaiterTableSummary;
+  onBill: (table: WaiterTableSummary) => void;
+  onAddOrder: (table: WaiterTableSummary) => void;
+  onCancelBill: (table: WaiterTableSummary) => void;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>{children}</PopoverTrigger>
+      <PopoverContent side="bottom" align="center" className="w-40 p-2">
+        <p className="truncate px-1 pb-1.5 text-xs font-semibold">{tableLabel(table)}</p>
+        <div className="grid gap-1">
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 text-xs"
+            onClick={() => {
+              setOpen(false);
+              onBill(table);
+            }}
+          >
+            Adisyon
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 text-xs"
+            onClick={() => {
+              setOpen(false);
+              onAddOrder(table);
+            }}
+          >
+            Sipariş Ekle
+          </Button>
+          {tableHasOpenBill(table) ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="destructive"
+              className="h-8 text-xs"
+              onClick={() => {
+                setOpen(false);
+                onCancelBill(table);
+              }}
+            >
+              Adisyon iptal
+            </Button>
+          ) : null}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function tableHasOpenBill(table: WaiterTableSummary): boolean {
+  const status = (table.billStatus ?? "").trim().toUpperCase();
+  return status === "OPEN" || (table.openBillId != null && table.openBillId > 0);
+}
+
+function tableTileClass(table: WaiterTableSummary): string {
+  return `${shell.tableTile} ${tableHasOpenBill(table) ? shell.tableTileOccupied : shell.tableTileEmpty}`;
 }
 
 function tableStatusLabel(table: WaiterTableSummary): string {
-  if (table.billStatus === "OPEN") return "Açık adisyon";
-  if ((table.pendingOrderCount ?? 0) > 0) return "Onay bekliyor";
-  if ((table.readyOrderCount ?? 0) > 0) return "Hazır sipariş var";
-  return "Boş";
+  return tableHasOpenBill(table) ? "Açık adisyon" : "Boş";
 }
 
 function orderFromTable(table: WaiterTableSummary): OrderResponse {
