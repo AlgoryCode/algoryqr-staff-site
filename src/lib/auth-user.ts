@@ -381,9 +381,5 @@ export function buildUpstreamAuthHeaders(accessToken: string): Record<string, st
   const headers: Record<string, string> = {
     Authorization: `Bearer ${accessToken}`,
   };
-  const userId = getUserIdFromAccessToken(accessToken);
-  if (userId != null) {
-    headers["X-User-Id"] = String(userId);
-  }
   return headers;
 }

@@ -2,7 +2,6 @@ import axios, { AxiosError } from "axios";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { getUserIdFromAccessToken } from "@/lib/auth-user";
 import { API_BASE_URL } from "@/lib/config";
 import { readAccessTokenFromCookies } from "@/lib/server/auth-cookies";
 import { clientContextHeaders } from "@/lib/server/client-headers";
@@ -20,7 +19,6 @@ export async function proxyAuthenticatedRequest(
       return NextResponse.json({ message: "Oturum gerekli" }, { status: 401 });
     }
 
-    const userId = getUserIdFromAccessToken(accessToken);
     const requestUrl = new URL(request.url);
     const query = upstreamPath.includes("?") ? "" : requestUrl.search;
     const writesJson = method !== "GET" && method !== "DELETE";
@@ -45,7 +43,6 @@ export async function proxyAuthenticatedRequest(
         Authorization: `Bearer ${accessToken}`,
         Accept: "application/json",
         ...(writesJson ? { "Content-Type": "application/json" } : {}),
-        ...(userId != null ? { "X-User-Id": String(userId) } : {}),
         ...clientContextHeaders(request),
       },
       validateStatus: () => true,
