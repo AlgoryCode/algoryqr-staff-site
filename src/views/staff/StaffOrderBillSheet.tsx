@@ -92,15 +92,10 @@ export function StaffOrderBillSheet({
     queryKey: ["staff-waiter-bill", tableId, order?.id ?? null],
     enabled: open && tableId != null,
     queryFn: async () => {
-      try {
-        return await getWaiterOpenBill(tableId!);
-      } catch (error) {
-        const billId = fallbackBillIdRef.current;
-        if (error instanceof WaiterApiError && error.status === 404 && billId != null) {
-          return getWaiterBill(billId);
-        }
-        throw error;
-      }
+      const openBill = await getWaiterOpenBill(tableId!);
+      if (openBill) return openBill;
+      const billId = fallbackBillIdRef.current;
+      return billId != null ? getWaiterBill(billId) : null;
     },
   });
 

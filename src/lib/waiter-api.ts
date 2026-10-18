@@ -1102,12 +1102,14 @@ export function staffAppForRole(staffRole?: StaffRole | null): StaffApp {
 
 /* ── Waiter bills ── */
 
-export async function getWaiterOpenBill(tableId: number): Promise<WaiterBill> {
-  const response = await waiterFetch(`/api/staff/bills/tables/${tableId}/open`, {
+/** Returns null when the table has no open bill (204). */
+export async function getWaiterOpenBill(tableId: number): Promise<WaiterBill | null> {
+  const response = await waiterFetch(`/api/staff/tables/${tableId}/bill`, {
     method: "GET",
     headers: { Accept: "application/json" },
     credentials: "same-origin",
   });
+  if (response.status === 204) return null;
   const data = await parseJson<WaiterBill & { message?: string }>(response);
   if (!response.ok) {
     throw new WaiterApiError(response.status, data.message || "Adisyon alınamadı");
@@ -1133,7 +1135,7 @@ export async function addWaiterBillItems(
   items: CartItemRequest[],
 ): Promise<WaiterBill> {
   const response = await waiterFetch(`/api/staff/bills/${billId}/items`, {
-    method: "PUT",
+    method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",
     body: JSON.stringify({ items }),
@@ -1151,7 +1153,7 @@ export async function updateWaiterBillItemQuantity(
   quantity: number,
 ): Promise<WaiterBill> {
   const response = await waiterFetch(`/api/staff/bills/${billId}/items/${itemId}`, {
-    method: "PUT",
+    method: "PATCH",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",
     body: JSON.stringify({ quantity }),
@@ -1185,7 +1187,7 @@ export async function payWaiterBillItems(
     tipAmount?: number;
   },
 ): Promise<WaiterBill> {
-  const response = await waiterFetch(`/api/staff/bills/${billId}/pay-items`, {
+  const response = await waiterFetch(`/api/staff/bills/${billId}/payments/items`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",
@@ -1219,7 +1221,7 @@ export async function getWaiterBillSplitPreview(
   personCount: number,
 ): Promise<WaiterSplitPreview> {
   const response = await waiterFetch(
-    `/api/staff/bills/${billId}/split-preview?personCount=${personCount}`,
+    `/api/staff/bills/${billId}/split?personCount=${personCount}`,
     {
       method: "GET",
       headers: { Accept: "application/json" },
@@ -1243,7 +1245,7 @@ export async function payWaiterBillShare(
     tipAmount?: number;
   },
 ): Promise<WaiterBill> {
-  const response = await waiterFetch(`/api/staff/bills/${billId}/pay-share`, {
+  const response = await waiterFetch(`/api/staff/bills/${billId}/payments/share`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "same-origin",
