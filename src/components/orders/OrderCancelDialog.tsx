@@ -27,6 +27,8 @@ type OrderCancelDialogProps = {
   title?: string;
   confirmLabel?: string;
   subject: string | null;
+  description?: string;
+  error?: string | null;
   busy?: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: (request: OrderCancelRequest) => void;
@@ -37,6 +39,8 @@ export function OrderCancelDialog({
   title = "Siparişi iptal et",
   confirmLabel = "Siparişi iptal et",
   subject,
+  description,
+  error,
   busy = false,
   onOpenChange,
   onConfirm,
@@ -61,7 +65,8 @@ export function OrderCancelDialog({
         <DialogHeader className="text-left">
           <DialogTitle className="text-lg font-semibold text-slate-900">{title}</DialogTitle>
           <DialogDescription className="text-sm text-slate-500">
-            {subject ? `${subject} iptal edilecek ve "İptal edilenler" listesine taşınacak.` : null}
+            {description ??
+              (subject ? `${subject} iptal edilecek ve "İptal edilenler" listesine taşınacak.` : null)}
           </DialogDescription>
         </DialogHeader>
 
@@ -103,6 +108,8 @@ export function OrderCancelDialog({
             />
           </div>
         </div>
+
+        {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
         <DialogFooter className="gap-2 sm:gap-2">
           <Button

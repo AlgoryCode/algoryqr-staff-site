@@ -117,7 +117,7 @@ export type WaiterBill = {
   menuId?: number;
   tableId: number;
   tableName?: string | null;
-  status?: "OPEN" | "CLOSED";
+  status?: "OPEN" | "CLOSED" | "CANCELLED";
   openedByWaiterId?: number | null;
   closedByWaiterId?: number | null;
   openedAt?: string | null;
@@ -719,10 +719,25 @@ export async function listWaiterCatalog(tableId: number): Promise<WaiterCatalogR
     throw new WaiterApiError(response.status, data.message || "Menü alınamadı");
   }
   return {
-    products: Array.isArray(data.products) ? data.products : [],
+    products: Array.isArray(data.products) ? data.products.map(normalizeCatalogProduct) : [],
     commissionEnabled: data.commissionEnabled,
     commissionType: data.commissionType,
     commissionValue: data.commissionValue,
+  };
+}
+
+function normalizeCatalogProduct(product: WaiterCatalogProduct): WaiterCatalogProduct {
+  const raw = product as WaiterCatalogProduct & {
+    image?: string | null;
+    photoUrl?: string | null;
+    thumbnailUrl?: string | null;
+  };
+  const image = [raw.imageUrl, raw.image, raw.photoUrl, raw.thumbnailUrl].find(
+    (value) => typeof value === "string" && value.trim().length > 0,
+  );
+  return {
+    ...product,
+    imageUrl: typeof image === "string" ? image.trim() : null,
   };
 }
 
@@ -1275,6 +1290,23 @@ export async function closeWaiterBill(
   const data = await parseJson<WaiterBill & { message?: string }>(response);
   if (!response.ok) {
     throw new WaiterApiError(response.status, data.message || "Masa kapatılamadı");
+  }
+  return data;
+}
+
+export async function cancelWaiterBill(
+  billId: number,
+  request?: OrderCancelRequest,
+): Promise<WaiterBill> {
+  const response = await waiterFetch(`/api/staff/bills/${billId}/cancel`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify(request ?? { reason: "OTHER" }),
+  });
+  const data = await parseJson<WaiterBill & { message?: string }>(response);
+  if (!response.ok) {
+    throw new WaiterApiError(response.status, data.message || "Adisyon iptal edilemedi");
   }
   return data;
 }

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Printer } from "lucide-react";
 
+import { OrderCancelDialog } from "@/components/orders/OrderCancelDialog";
 import { formatMenuPrice } from "@/components/menu-templates/types";
 import { paymentMethodLabel } from "@/components/waiter/bill/bill-utils";
 import { BillCloseDialog } from "@/components/waiter/bill/BillCloseDialog";
@@ -20,11 +21,12 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { ordersToDeliverOnBillClose, ordersToMarkPaidOnBillClose, ordersToRestoreOnPaymentReverse } from "@/lib/bill-auto-serve";
-import { forceOrderFlowStatus, waiterCanCollectOnOrders } from "@/lib/order-flow";
+import { forceOrderFlowStatus, waiterCanCollectOnOrders, type OrderCancelRequest } from "@/lib/order-flow";
 import { orderLocationLabel } from "@/lib/order-management";
 import type { OrderResponse } from "@/lib/ordering-api";
 import { billToReceipt, printReceiptInBrowser } from "@/lib/receipt-ticket";
 import {
+  cancelWaiterBill,
   closeWaiterBill,
   getWaiterBill,
   getWaiterOpenBill,
@@ -79,6 +81,7 @@ export function StaffOrderBillSheet({
   }
 
   const [closeOpen, setCloseOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
   const [payItem, setPayItem] = useState<WaiterBillItem | null>(null);
   const [reversingPaymentId, setReversingPaymentId] = useState<number | null>(null);
   const [billError, setBillError] = useState<string | null>(null);
@@ -137,7 +140,8 @@ export function StaffOrderBillSheet({
               tipAmount?: number;
             };
           }
-        | { kind: "reverse"; paymentId: number },
+        | { kind: "reverse"; paymentId: number }
+        | { kind: "cancel"; request: OrderCancelRequest },
     ) => {
       if (!bill) throw new Error("Adisyon yüklenmedi.");
       if (action.kind === "payItem") {
@@ -152,6 +156,9 @@ export function StaffOrderBillSheet({
       }
       if (action.kind === "payShare") {
         return payWaiterBillShare(bill.id, action.payload);
+      }
+      if (action.kind === "cancel") {
+        return cancelWaiterBill(bill.id, action.request);
       }
       return reverseWaiterBillPayment(bill.id, action.paymentId);
     },
@@ -171,6 +178,12 @@ export function StaffOrderBillSheet({
       setPayItem(null);
       setReversingPaymentId(null);
       setCloseOpen(false);
+      if (action.kind === "cancel") {
+        setCancelOpen(false);
+        onBillUpdated?.();
+        onOpenChange(false);
+        return;
+      }
       const liveOrders = tableOrders?.length ? tableOrders : order ? [order] : [];
       if (action.kind === "closeFull" && updated.status === "CLOSED" && kitchenEnabled) {
         const failures = await Promise.all(
@@ -394,6 +407,17 @@ export function StaffOrderBillSheet({
               ) : null}
 
               <div className="mt-auto flex flex-col gap-2">
+                {!closed ? (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className="w-full"
+                    disabled={busy}
+                    onClick={() => setCancelOpen(true)}
+                  >
+                    Adisyonu iptal et
+                  </Button>
+                ) : null}
                 <Button type="button" variant="outline" className="w-full" onClick={printBill}>
                   <Printer />
                   Fiş yazdır
@@ -430,6 +454,17 @@ export function StaffOrderBillSheet({
             busy={busy}
             onCloseFull={(payload) => billMutation.mutate({ kind: "closeFull", payload })}
             onPayShare={(payload) => billMutation.mutate({ kind: "payShare", payload })}
+          />
+          <OrderCancelDialog
+            open={cancelOpen}
+            title="Adisyonu iptal et"
+            confirmLabel="Adisyonu iptal et"
+            subject={tableLabel || bill.tableName || "Adisyon"}
+            description="Açık adisyon ve bağlı siparişler iptal edilir. Ödeme alınmışsa iptal edilmez."
+            error={billError}
+            busy={busy}
+            onOpenChange={setCancelOpen}
+            onConfirm={(request) => billMutation.mutate({ kind: "cancel", request })}
           />
           <BillItemPayDialog
             open={payItem != null}
