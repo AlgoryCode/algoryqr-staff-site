@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/sheet";
 import type { MenuProductOptionGroupApiItem } from "@/lib/api";
 import {
+  addWaiterBillItems,
   createWaiterOrder,
   listWaiterCatalog,
   WaiterApiError,
@@ -29,6 +30,7 @@ type OrderLine = {
   quantity: number;
   selectedOptionIds: number[];
   optionLabel: string;
+  unitPrice: number;
 };
 
 type WaiterAddOrderSheetProps = {
@@ -36,9 +38,20 @@ type WaiterAddOrderSheetProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated: (table: WaiterTableSummary) => void;
+  billId?: number | null;
+  baseTotal?: number;
+  currency?: string;
 };
 
-export function WaiterAddOrderSheet({ table, open, onOpenChange, onCreated }: WaiterAddOrderSheetProps) {
+export function WaiterAddOrderSheet({
+  table,
+  open,
+  onOpenChange,
+  onCreated,
+  billId = null,
+  baseTotal = 0,
+  currency: currencyProp = "TRY",
+}: WaiterAddOrderSheetProps) {
   const tableId = table?.tableId ?? null;
   const [category, setCategory] = useState("all");
   const [query, setQuery] = useState("");
@@ -91,14 +104,15 @@ export function WaiterAddOrderSheet({ table, open, onOpenChange, onCreated }: Wa
   const submit = useMutation({
     mutationFn: async () => {
       if (tableId == null) throw new Error("Masa seçilmedi");
-      return createWaiterOrder({
-        tableId,
-        items: lines.map((line) => ({
-          productId: line.productId,
-          quantity: line.quantity,
-          selectedOptionIds: line.selectedOptionIds,
-        })),
-      });
+      const items = lines.map((line) => ({
+        productId: line.productId,
+        quantity: line.quantity,
+        selectedOptionIds: line.selectedOptionIds,
+      }));
+      if (billId != null && billId > 0) {
+        return addWaiterBillItems(billId, items);
+      }
+      return createWaiterOrder({ tableId, items });
     },
     onSuccess: () => {
       if (table) onCreated(table);
@@ -110,6 +124,10 @@ export function WaiterAddOrderSheet({ table, open, onOpenChange, onCreated }: Wa
 
   const tableLabel = table?.tableName?.trim() || (table ? `Masa ${table.tableNumber ?? table.tableId}` : "Masa");
   const itemCount = lines.reduce((sum, line) => sum + line.quantity, 0);
+  const cartTotal = lines.reduce((sum, line) => sum + line.unitPrice * line.quantity, 0);
+  const displayTotal = Math.max(0, baseTotal) + cartTotal;
+  const currency = currencyProp || "TRY";
+  const addingToBill = billId != null && billId > 0;
 
   const addConfiguredProduct = (product: WaiterCatalogProduct) => {
     const validation = optionValidation(product.optionGroups ?? [], draftOptions);
@@ -119,14 +137,21 @@ export function WaiterAddOrderSheet({ table, open, onOpenChange, onCreated }: Wa
     }
     setError(null);
     const selected = [...draftOptions].sort((left, right) => left - right);
-    setLines((current) => upsertLine(current, {
-      key: `${product.productId}:${selected.join(",")}`,
-      productId: product.productId,
-      name: product.name,
-      quantity: draftQuantity,
-      selectedOptionIds: selected,
-      optionLabel: optionLabel(product.optionGroups ?? [], selected),
-    }, draftQuantity));
+    setLines((current) =>
+      upsertLine(
+        current,
+        {
+          key: `${product.productId}:${selected.join(",")}`,
+          productId: product.productId,
+          name: product.name,
+          quantity: draftQuantity,
+          selectedOptionIds: selected,
+          optionLabel: optionLabel(product.optionGroups ?? [], selected),
+          unitPrice: unitPriceForProduct(product, selected),
+        },
+        draftQuantity,
+      ),
+    );
     setExpandedProductId(null);
     setDraftOptions([]);
     setDraftQuantity(1);
@@ -136,9 +161,14 @@ export function WaiterAddOrderSheet({ table, open, onOpenChange, onCreated }: Wa
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="flex w-full flex-col overflow-hidden sm:max-w-md">
         <SheetHeader className="shrink-0 pr-6">
-          <SheetTitle>Sipariş Ekle</SheetTitle>
+          <SheetTitle>{addingToBill ? "Adisyona ürün ekle" : "Sipariş ekle"}</SheetTitle>
           <SheetDescription>{tableLabel}</SheetDescription>
         </SheetHeader>
+
+        <div className="mt-3 flex shrink-0 items-center justify-between rounded-xl border border-border bg-muted/40 px-4 py-3">
+          <span className="text-sm font-medium text-muted-foreground">Toplam tutar</span>
+          <span className="text-lg font-semibold tabular-nums">{formatMenuPrice(displayTotal, currency)}</span>
+        </div>
 
         <div className="mt-4 flex min-h-0 flex-1 flex-col gap-3">
           {catalogQuery.isLoading ? (
@@ -211,14 +241,17 @@ export function WaiterAddOrderSheet({ table, open, onOpenChange, onCreated }: Wa
                             disabled={!product.available}
                             onChange={(quantity) => {
                               setError(null);
-                              setLines((current) => setLineQuantity(current, String(product.productId), {
-                                key: String(product.productId),
-                                productId: product.productId,
-                                name: product.name,
-                                quantity,
-                                selectedOptionIds: [],
-                                optionLabel: "",
-                              }));
+                              setLines((current) =>
+                                setLineQuantity(current, String(product.productId), {
+                                  key: String(product.productId),
+                                  productId: product.productId,
+                                  name: product.name,
+                                  quantity,
+                                  selectedOptionIds: [],
+                                  optionLabel: "",
+                                  unitPrice: unitPriceForProduct(product, []),
+                                }),
+                              );
                             }}
                           />
                         )}
@@ -303,7 +336,11 @@ export function WaiterAddOrderSheet({ table, open, onOpenChange, onCreated }: Wa
               submit.mutate();
             }}
           >
-            {submit.isPending ? "Gönderiliyor…" : `Siparişi gönder${itemCount > 0 ? ` (${itemCount})` : ""}`}
+            {submit.isPending
+              ? "Kaydediliyor…"
+              : addingToBill
+                ? `Adisyona ekle${itemCount > 0 ? ` (${itemCount})` : ""}`
+                : `Siparişi gönder${itemCount > 0 ? ` (${itemCount})` : ""}`}
           </Button>
         </div>
       </SheetContent>
@@ -450,4 +487,25 @@ function optionLabel(groups: MenuProductOptionGroupApiItem[], selected: number[]
     }
   }
   return names.join(", ");
+}
+
+function parseAmount(value: number | string | null | undefined): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value.replace(",", ".").trim());
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
+function unitPriceForProduct(product: WaiterCatalogProduct, selectedOptionIds: number[]): number {
+  let total = parseAmount(product.price);
+  for (const group of product.optionGroups ?? []) {
+    for (const option of group.options ?? []) {
+      if (selectedOptionIds.includes(option.optionId)) {
+        total += parseAmount(option.priceDelta);
+      }
+    }
+  }
+  return total;
 }
