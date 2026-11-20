@@ -446,7 +446,7 @@ function MatchCard({
         id == null && "italic text-muted-foreground",
       )}
     >
-      {name ?? (id == null ? (bye ? "—" : "Bekleniyor") : "Oyuncu")}
+      {name ?? (id == null ? (bye ? "Bay" : "Bekleniyor") : "Oyuncu")}
     </span>
   );
 
