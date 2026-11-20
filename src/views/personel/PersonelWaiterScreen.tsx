@@ -3,11 +3,12 @@
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, LayoutGrid, List, LogOut, UtensilsCrossed } from "lucide-react";
+import { CalendarDays, Gamepad2, LayoutGrid, List, LogOut, UtensilsCrossed } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { BrandLogo } from "@/components/BrandLogo";
 import { OrderCancelDialog } from "@/components/orders/OrderCancelDialog";
+import { DeviceRentalScreen, useDeviceRentalAccess } from "@/components/devices/DeviceRentalScreen";
 import { Button } from "@/components/ui/button";
 import { ordersForStaffBranch } from "@/lib/branch-scope";
 import { formatBranchCode, isBranchCourierEnabled } from "@/lib/branch";
@@ -59,7 +60,7 @@ import {
 
 import { StaffOrderBillSheet } from "@/views/staff/StaffOrderBillSheet";
 
-type WaiterTab = "tables" | "reservations";
+type WaiterTab = "tables" | "reservations" | "devices";
 type TableLayout = "grid" | "list";
 
 const shell = {
@@ -70,7 +71,7 @@ const shell = {
   main: "mx-auto w-full max-w-6xl flex-1 px-4 py-5 pb-28",
   bottomNav:
     "fixed inset-x-0 bottom-0 z-40 border-t border-border/80 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/90",
-  bottomNavInner: "mx-auto grid max-w-6xl grid-cols-2 gap-1 px-4 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]",
+  bottomNavInner: "mx-auto grid max-w-6xl gap-1 px-4 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]",
   navBtn:
     "flex flex-col items-center justify-center gap-1 rounded-xl px-3 py-2 text-xs font-medium text-muted-foreground transition-colors",
   navBtnActive: "bg-primary/10 text-primary",
@@ -131,6 +132,8 @@ export function PersonelWaiterScreen({ me }: { me: WaiterMe }) {
   const kitchenEnabled = me.kitchenEnabled === true;
   const courierEnabled = isBranchCourierEnabled(me);
   const profileReady = isStaffProfileComplete(me);
+  const devicesEnabled = useDeviceRentalAccess(profileReady);
+  const activeTab: WaiterTab = tab === "devices" && !devicesEnabled ? "tables" : tab;
 
   function isStaffAuthError(error: unknown): boolean {
     return (
@@ -422,7 +425,7 @@ export function PersonelWaiterScreen({ me }: { me: WaiterMe }) {
             <code className="text-xs">docs/STAFF_JWT_QR_SERVICE.md</code> kontrol listesine bakmalı.
           </div>
         ) : null}
-        {tab === "tables" ? (
+        {activeTab === "tables" ? (
           <div className="space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
               <div>
@@ -584,20 +587,22 @@ export function PersonelWaiterScreen({ me }: { me: WaiterMe }) {
           </div>
         ) : null}
 
-        {tab === "reservations" ? (
+        {activeTab === "reservations" ? (
           <div className="flex min-h-[50vh] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border bg-muted/20 px-6 text-center">
             <CalendarDays className="h-10 w-10 text-muted-foreground" />
             <h1 className="text-xl font-semibold">Rezervasyonlar</h1>
             <p className="max-w-sm text-sm text-muted-foreground">Rezervasyon listesi yakında burada olacak.</p>
           </div>
         ) : null}
+
+        {activeTab === "devices" ? <DeviceRentalScreen /> : null}
       </main>
 
       <nav className={shell.bottomNav} aria-label="Garson menüsü">
-        <div className={shell.bottomNavInner}>
+        <div className={`${shell.bottomNavInner} ${devicesEnabled ? "grid-cols-3" : "grid-cols-2"}`}>
           <button
             type="button"
-            className={`${shell.navBtn} ${tab === "tables" ? shell.navBtnActive : ""}`}
+            className={`${shell.navBtn} ${activeTab === "tables" ? shell.navBtnActive : ""}`}
             onClick={() => setTab("tables")}
           >
             <UtensilsCrossed className="h-5 w-5" />
@@ -605,12 +610,22 @@ export function PersonelWaiterScreen({ me }: { me: WaiterMe }) {
           </button>
           <button
             type="button"
-            className={`${shell.navBtn} ${tab === "reservations" ? shell.navBtnActive : ""}`}
+            className={`${shell.navBtn} ${activeTab === "reservations" ? shell.navBtnActive : ""}`}
             onClick={() => setTab("reservations")}
           >
             <CalendarDays className="h-5 w-5" />
             Rezervasyonlar
           </button>
+          {devicesEnabled ? (
+            <button
+              type="button"
+              className={`${shell.navBtn} ${activeTab === "devices" ? shell.navBtnActive : ""}`}
+              onClick={() => setTab("devices")}
+            >
+              <Gamepad2 className="h-5 w-5" />
+              Cihazlar
+            </button>
+          ) : null}
         </div>
       </nav>
 

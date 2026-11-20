@@ -198,7 +198,7 @@ export type WaiterCreateOrderRequest = {
   kitchenEnabled?: boolean;
 };
 
-async function parseJson<T>(response: Response): Promise<T> {
+export async function parseJson<T>(response: Response): Promise<T> {
   const text = await response.text();
   if (!text) return {} as T;
   try {
@@ -432,7 +432,7 @@ export async function refreshWaiterSession(app: StaffApp = currentStaffApp()): P
   return staffRefreshPromises[app]!;
 }
 
-async function waiterFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+export async function waiterFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = typeof input === "string" ? input : input.toString();
   const nextInit = withStaffAppHeaders(init);
   const response = await fetch(input, nextInit);
