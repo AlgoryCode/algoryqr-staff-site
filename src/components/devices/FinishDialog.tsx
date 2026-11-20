@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import { CheckCircle2, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -17,11 +17,12 @@ import {
   previewFinalAmount,
   toAmount,
   type DevicePaymentMethod,
+  type DeviceQuoteOptions,
   type DeviceSession,
   type DiscountMode,
 } from "@/lib/device-rental";
 
-import { ChoiceButton, ErrorText } from "./device-ui";
+import { ChoiceButton, ErrorText, useDebounced } from "./device-ui";
 
 const METHODS: DevicePaymentMethod[] = ["CASH", "CARD", "TRANSFER", "BALANCE"];
 
@@ -45,13 +46,47 @@ export function FinishDialog({
   );
 }
 
-function Row({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+function Row({ label, value, strong, accent }: { label: string; value: string; strong?: boolean; accent?: boolean }) {
   return (
-    <p className={`flex justify-between gap-3 text-sm ${strong ? "font-semibold" : ""}`}>
-      <span className={strong ? "" : "text-muted-foreground"}>{label}</span>
+    <p className={`flex justify-between gap-3 text-sm ${strong ? "font-semibold" : ""} ${accent ? "text-emerald-700" : ""}`}>
+      <span className={strong || accent ? "" : "text-muted-foreground"}>{label}</span>
       <span className="tabular-nums">{value}</span>
     </p>
   );
+}
+
+function OptionCheck({
+  checked,
+  disabled,
+  onChange,
+  title,
+  detail,
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (checked: boolean) => void;
+  title: string;
+  detail: string;
+}) {
+  return (
+    <label className="flex items-start gap-3 rounded-xl border border-border p-3 text-sm">
+      <input
+        type="checkbox"
+        className="mt-0.5 h-4 w-4 accent-primary"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span>
+        <span className="font-medium">{title}</span>
+        <span className="block text-xs text-muted-foreground">{detail}</span>
+      </span>
+    </label>
+  );
+}
+
+function minus(value: Parameters<typeof toAmount>[0]): string {
+  return `−${formatDeviceMoney(value)}`;
 }
 
 function FinishPanel({
@@ -67,27 +102,36 @@ function FinishPanel({
   const [discountMode, setDiscountMode] = useState<DiscountMode>("amount");
   const [discount, setDiscount] = useState("");
   const [useLoyalty, setUseLoyalty] = useState(false);
+  const [useMembership, setUseMembership] = useState(false);
+  const [useBonus, setUseBonus] = useState(false);
   const [result, setResult] = useState<DeviceSession | null>(null);
-
-  const quoteQuery = useQuery({
-    queryKey: deviceQueryKeys.quote(session.id),
-    queryFn: () => quoteDeviceSession(session.id),
-    gcTime: 0,
-    retry: false,
-  });
 
   const discountValue = discount.trim() ? parseMoneyInput(discount) : 0;
   const discountInvalid =
     !Number.isFinite(discountValue) || discountValue < 0 || (discountMode === "percent" && discountValue > 100);
 
+  const options: DeviceQuoteOptions = {
+    useLoyaltyMinutes: useLoyalty || undefined,
+    useMembershipMinutes: useMembership || undefined,
+    useBonusBalance: useBonus || undefined,
+    discountAmount: !discountInvalid && discountMode === "amount" && discountValue > 0 ? discountValue : undefined,
+    discountPercent: !discountInvalid && discountMode === "percent" && discountValue > 0 ? discountValue : undefined,
+  };
+  const optionsKey = JSON.stringify(options);
+  const debouncedKey = useDebounced(optionsKey, 350);
+
+  // The server prices the chosen options (membership → loyalty → level → bonus → manual discount).
+  const quoteQuery = useQuery({
+    queryKey: deviceQueryKeys.quote(session.id, debouncedKey),
+    queryFn: () => quoteDeviceSession(session.id, JSON.parse(debouncedKey) as DeviceQuoteOptions),
+    placeholderData: keepPreviousData,
+    gcTime: 0,
+    retry: false,
+  });
+  const quoteSettled = debouncedKey === optionsKey && !quoteQuery.isPlaceholderData && !quoteQuery.isFetching && !quoteQuery.isError;
+
   const finish = useMutation({
-    mutationFn: () =>
-      finishDeviceSession(session.id, {
-        paymentMethod: method,
-        discountAmount: discountMode === "amount" && discountValue > 0 ? discountValue : undefined,
-        discountPercent: discountMode === "percent" && discountValue > 0 ? discountValue : undefined,
-        useLoyaltyMinutes: useLoyalty || undefined,
-      }),
+    mutationFn: () => finishDeviceSession(session.id, { paymentMethod: method, ...options }),
     onSuccess: (finished) => {
       setResult(finished);
       onFinished();
@@ -106,8 +150,12 @@ function FinishPanel({
         </DialogHeader>
         <div className="space-y-1 rounded-xl border border-border p-4 text-left">
           <Row label="Süre" value={formatMinutes(result.durationMinutes)} />
-          {toAmount(result.discountAmount) > 0 ? <Row label="İndirim" value={`-${formatDeviceMoney(result.discountAmount)}`} /> : null}
+          {result.packageName ? <Row label="Paket" value={result.packageName} /> : null}
+          {result.membershipMinutesUsed ? <Row label="Üyelik dakikası" value={formatMinutes(result.membershipMinutesUsed)} /> : null}
           {result.loyaltyMinutesUsed ? <Row label="Ücretsiz dakika" value={formatMinutes(result.loyaltyMinutesUsed)} /> : null}
+          {toAmount(result.tierDiscountAmount) > 0 ? <Row label="Seviye indirimi" value={minus(result.tierDiscountAmount)} /> : null}
+          {toAmount(result.bonusUsed) > 0 ? <Row label="Bonus" value={minus(result.bonusUsed)} /> : null}
+          {toAmount(result.discountAmount) > 0 ? <Row label="İndirim" value={minus(result.discountAmount)} /> : null}
           <Row label="Ödeme" value={result.paymentMethod ? PAYMENT_METHOD_LABEL[result.paymentMethod] : PAYMENT_METHOD_LABEL[method]} />
         </div>
         <p className="text-3xl font-semibold tabular-nums">{formatDeviceMoney(result.amount)}</p>
@@ -121,16 +169,22 @@ function FinishPanel({
   const quote = quoteQuery.data;
   const hasCustomer = quote?.customerId != null || session.customerId != null;
   const usableLoyalty = quote?.loyaltyMinutesUsable ?? 0;
-  const preview = quote
-    ? previewFinalAmount({
-        gross: toAmount(quote.grossAmount),
-        loyaltyValue: useLoyalty ? toAmount(quote.loyaltyValue) : 0,
-        discountMode,
-        discount: discountInvalid ? 0 : discountValue,
-      })
+  const membershipAvailable = quote?.membershipMinutesAvailable ?? 0;
+  const bonusBalance = toAmount(quote?.bonusBalance);
+  // An older backend has no `amount`; fall back to the local preview.
+  const finalAmount = quote
+    ? quote.amount != null
+      ? toAmount(quote.amount)
+      : previewFinalAmount({
+          gross: toAmount(quote.grossAmount),
+          loyaltyValue: useLoyalty ? toAmount(quote.loyaltyValue) : 0,
+          discountMode,
+          discount: discountInvalid ? 0 : discountValue,
+        })
     : null;
   const balance = toAmount(quote?.customerBalance);
-  const balanceShort = method === "BALANCE" && preview != null && balance < preview;
+  const balanceShort = method === "BALANCE" && finalAmount != null && balance < finalAmount;
+  const tierPercent = toAmount(quote?.tierDiscountPercent);
 
   return (
     <div className="space-y-4">
@@ -143,7 +197,7 @@ function FinishPanel({
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" /> Hesap alınıyor…
         </p>
-      ) : quoteQuery.isError ? (
+      ) : quoteQuery.isError && !quote ? (
         <div className="space-y-2">
           <ErrorText error={quoteQuery.error} />
           <Button type="button" size="sm" variant="outline" onClick={() => void quoteQuery.refetch()}>
@@ -155,6 +209,9 @@ function FinishPanel({
           <div className="space-y-1 rounded-xl border border-border p-3">
             <Row label="Oynanan süre" value={formatClock(quote.playedSeconds)} />
             <Row label="Ücretlenen" value={formatMinutes(quote.durationMinutes)} />
+            {quote.packageName || session.packageName ? (
+              <Row label="Paket" value={quote.packageName ?? session.packageName ?? ""} />
+            ) : null}
             <Row label="Süre tutarı" value={formatDeviceMoney(quote.timeAmount)} />
             {(session.items ?? []).map((item) => (
               <Row key={item.id} label={`${item.quantity}× ${item.name}`} value={formatDeviceMoney(item.lineTotal)} />
@@ -163,27 +220,65 @@ function FinishPanel({
             <div className="border-t border-border pt-1">
               <Row label="Toplam" value={formatDeviceMoney(quote.grossAmount)} strong />
             </div>
+            {quote.membershipMinutesUsed ? (
+              <Row
+                accent
+                label={`Üyelik (${formatMinutes(quote.membershipMinutesUsed)})`}
+                value={minus(quote.membershipValue)}
+              />
+            ) : null}
+            {quote.loyaltyMinutesUsed ? (
+              <Row
+                accent
+                label={`Ücretsiz dakika (${formatMinutes(quote.loyaltyMinutesUsed)})`}
+                value={minus(quote.loyaltyDiscount)}
+              />
+            ) : null}
+            {toAmount(quote.tierDiscountAmount) > 0 ? (
+              <Row
+                accent
+                label={`Seviye indirimi${quote.tierName ? ` · ${quote.tierName}` : ""}${tierPercent > 0 ? ` (%${tierPercent})` : ""}`}
+                value={minus(quote.tierDiscountAmount)}
+              />
+            ) : null}
+            {toAmount(quote.bonusUsed) > 0 ? <Row accent label="Bonus bakiye" value={minus(quote.bonusUsed)} /> : null}
+            {toAmount(quote.manualDiscount) > 0 ? <Row accent label="İndirim" value={minus(quote.manualDiscount)} /> : null}
           </div>
 
+          {quote.tierName && toAmount(quote.tierDiscountAmount) <= 0 && tierPercent > 0 ? (
+            <p className="text-xs text-muted-foreground">
+              Seviye: {quote.tierName} (%{tierPercent}) · indirim yalnız paketsiz süre tutarına uygulanır.
+            </p>
+          ) : null}
+
+          {membershipAvailable > 0 ? (
+            <OptionCheck
+              checked={useMembership}
+              onChange={setUseMembership}
+              title="Üyelik dakikalarını kullan"
+              detail={`${formatMinutes(membershipAvailable)} üyelik dakikası var`}
+            />
+          ) : null}
+
           {quote.loyaltyMinutesAvailable > 0 ? (
-            <label className="flex items-start gap-3 rounded-xl border border-border p-3 text-sm">
-              <input
-                type="checkbox"
-                className="mt-0.5 h-4 w-4 accent-primary"
-                checked={useLoyalty}
-                disabled={usableLoyalty <= 0}
-                onChange={(event) => setUseLoyalty(event.target.checked)}
-              />
-              <span>
-                <span className="font-medium">Ücretsiz dakikaları kullan</span>
-                <span className="block text-xs text-muted-foreground">
-                  {formatMinutes(quote.loyaltyMinutesAvailable)} birikmiş
-                  {usableLoyalty > 0
-                    ? ` · ${formatMinutes(usableLoyalty)} kullanılır (−${formatDeviceMoney(quote.loyaltyValue)})`
-                    : " · bu oturumda kullanılamaz"}
-                </span>
-              </span>
-            </label>
+            <OptionCheck
+              checked={useLoyalty}
+              disabled={usableLoyalty <= 0}
+              onChange={setUseLoyalty}
+              title="Ücretsiz dakikaları kullan"
+              detail={`${formatMinutes(quote.loyaltyMinutesAvailable)} birikmiş${
+                usableLoyalty > 0 ? ` · ${formatMinutes(usableLoyalty)} kullanılabilir` : " · bu oturumda kullanılamaz"
+              }`}
+            />
+          ) : null}
+
+          {bonusBalance > 0 ? (
+            <OptionCheck
+              checked={useBonus}
+              onChange={setUseBonus}
+              title="Bonus bakiyeyi kullan"
+              detail={`${formatDeviceMoney(bonusBalance)} hediye / davet bonusu`}
+            />
           ) : null}
 
           <div className="space-y-1.5">
@@ -226,9 +321,14 @@ function FinishPanel({
             )}
           </div>
 
+          {quoteQuery.isError ? <ErrorText error={quoteQuery.error} /> : null}
+
           <div className="flex items-center justify-between rounded-xl bg-muted/50 px-4 py-3">
-            <span className="text-sm text-muted-foreground">Ödenecek (tahmini)</span>
-            <span className="text-xl font-semibold tabular-nums">{formatDeviceMoney(preview)}</span>
+            <span className="flex items-center gap-2 text-sm text-muted-foreground">
+              Ödenecek
+              {!quoteSettled ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+            </span>
+            <span className="text-xl font-semibold tabular-nums">{formatDeviceMoney(finalAmount)}</span>
           </div>
 
           <ErrorText error={finish.error} />
@@ -237,7 +337,7 @@ function FinishPanel({
             type="button"
             variant="destructive"
             className="w-full"
-            disabled={finish.isPending || discountInvalid || balanceShort}
+            disabled={finish.isPending || discountInvalid || balanceShort || !quoteSettled}
             onClick={() => finish.mutate()}
           >
             {finish.isPending ? <Loader2 className="animate-spin" /> : null}

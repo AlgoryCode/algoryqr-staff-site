@@ -61,6 +61,8 @@ export function CustomerPicker({
             <p className="text-xs text-muted-foreground">
               {selected.phone ? `${selected.phone} · ` : ""}Bakiye {formatDeviceMoney(selected.balance)}
               {selected.freeMinutes > 0 ? ` · ${formatMinutes(selected.freeMinutes)} ücretsiz` : ""}
+              {(selected.membershipMinutes ?? 0) > 0 ? ` · ${formatMinutes(selected.membershipMinutes)} üyelik` : ""}
+              {selected.tierName ? ` · ${selected.tierName}` : ""}
             </p>
           </div>
           <Button type="button" size="icon" variant="ghost" aria-label="Müşteriyi kaldır" onClick={() => onSelect(null)}>

@@ -1,7 +1,22 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowLeftRight, CalendarClock, Pause, Play, Plus, ShoppingBag, Square, Timer } from "lucide-react";
+import {
+  ArrowLeftRight,
+  BellRing,
+  CalendarClock,
+  Check,
+  Gamepad2,
+  Package,
+  Pause,
+  Play,
+  Plus,
+  ShoppingBag,
+  Square,
+  Timer,
+  Wrench,
+  X,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -11,6 +26,7 @@ import {
   formatClock,
   formatCountdown,
   formatDeviceMoney,
+  formatIstanbulDateTime,
   formatIstanbulTime,
   formatMinutes,
   liveElapsedSeconds,
@@ -29,6 +45,8 @@ export type DeviceCardActions = {
   onTransfer: (session: DeviceSession) => void;
   onItems: (session: DeviceSession) => void;
   onFinish: (session: DeviceSession) => void;
+  onMaintenance: (device: Device, mode: "start" | "end") => void;
+  onExtensionRequest: (session: DeviceSession, approve: boolean) => void;
 };
 
 export function DeviceCard({
@@ -47,6 +65,7 @@ export function DeviceCard({
   actions: DeviceCardActions;
 }) {
   const busy = session != null || device.busy;
+  const maintenance = device.maintenance === true && session == null;
   const elapsed = session ? liveElapsedSeconds(session, fetchedAt, now) : 0;
   const remaining = session ? remainingSeconds(session.plannedMinutes, elapsed) : null;
   const overtime = remaining != null && remaining <= 0;
@@ -56,7 +75,8 @@ export function DeviceCard({
     <article
       className={cn(
         deviceCardClass,
-        !busy && "border-emerald-700/30",
+        !busy && !maintenance && "border-emerald-700/30",
+        maintenance && "border-amber-500/50 bg-amber-50/60 dark:bg-amber-950/20",
         busy && !overtime && "border-primary/40 ring-1 ring-primary/10",
         overtime && "border-red-600 bg-red-50 ring-2 ring-red-500/40 dark:bg-red-950/30",
       )}
@@ -65,7 +85,11 @@ export function DeviceCard({
         <span
           className={cn(
             "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl",
-            busy ? "bg-primary/10 text-primary" : "bg-emerald-100 text-emerald-900",
+            busy
+              ? "bg-primary/10 text-primary"
+              : maintenance
+                ? "bg-amber-100 text-amber-900"
+                : "bg-emerald-100 text-emerald-900",
           )}
         >
           <DeviceTypeIcon type={device.deviceType} className="h-5 w-5" />
@@ -78,10 +102,14 @@ export function DeviceCard({
           <span
             className={cn(
               "rounded-full px-2 py-0.5 text-[11px] font-semibold",
-              busy ? "bg-red-500 text-white" : "bg-emerald-200 text-emerald-950",
+              busy
+                ? "bg-red-500 text-white"
+                : maintenance
+                  ? "bg-amber-300 text-amber-950"
+                  : "bg-emerald-200 text-emerald-950",
             )}
           >
-            {busy ? "Dolu" : "Boş"}
+            {busy ? "Dolu" : maintenance ? "Bakımda" : "Boş"}
           </span>
           {session?.paused ? (
             <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-950">
@@ -121,7 +149,61 @@ export function DeviceCard({
               <span className="font-normal text-muted-foreground">/ {formatMinutes(session.plannedMinutes)}</span>
             </p>
           ) : null}
+          {session.packageName || session.gameName ? (
+            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              {session.packageName ? (
+                <span className="flex min-w-0 items-center gap-1">
+                  <Package className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{session.packageName}</span>
+                </span>
+              ) : null}
+              {session.gameName ? (
+                <span className="flex min-w-0 items-center gap-1">
+                  <Gamepad2 className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{session.gameName}</span>
+                </span>
+              ) : null}
+            </p>
+          ) : null}
           {session.note?.trim() ? <p className="truncate text-xs text-amber-800">{session.note.trim()}</p> : null}
+          {session.extensionRequestMinutes ? (
+            <div className="flex items-center gap-2 rounded-lg border border-sky-500/40 bg-sky-50 px-2 py-1.5 text-xs dark:bg-sky-950/30">
+              <BellRing className="h-3.5 w-3.5 shrink-0 text-sky-700" />
+              <span className="min-w-0 flex-1 font-medium text-sky-900 dark:text-sky-200">
+                QR: +{formatMinutes(session.extensionRequestMinutes)} istendi
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                className="h-7 px-2"
+                disabled={pending}
+                onClick={() => actions.onExtensionRequest(session, true)}
+              >
+                <Check />
+                Onayla
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 px-2"
+                disabled={pending}
+                onClick={() => actions.onExtensionRequest(session, false)}
+              >
+                <X />
+                Reddet
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      ) : maintenance ? (
+        <div className="space-y-1 text-xs text-amber-900 dark:text-amber-200">
+          <p className="flex items-center gap-1.5 font-medium">
+            <Wrench className="h-3.5 w-3.5" />
+            Bakımda{device.maintenanceSince ? ` · başlangıç ${formatIstanbulDateTime(device.maintenanceSince)}` : ""}
+          </p>
+          {device.maintenanceNote?.trim() ? <p className="truncate">{device.maintenanceNote.trim()}</p> : null}
+          <p className="text-muted-foreground">Bakımdaki cihazda oturum başlatılamaz.</p>
         </div>
       ) : busy ? (
         <p className="text-xs text-muted-foreground">Oturum bilgisi yükleniyor…</p>
@@ -140,11 +222,28 @@ export function DeviceCard({
       <div className="mt-auto">
         {session ? (
           <BusyActions session={session} pending={pending} actions={actions} />
-        ) : !busy ? (
-          <Button type="button" className="w-full" disabled={pending} onClick={() => actions.onStart(device)}>
-            <Play />
-            Başlat
+        ) : maintenance ? (
+          <Button type="button" variant="outline" className="w-full" onClick={() => actions.onMaintenance(device, "end")}>
+            <Wrench />
+            Bakımı bitir
           </Button>
+        ) : !busy ? (
+          <div className="flex gap-2">
+            <Button type="button" className="flex-1" disabled={pending} onClick={() => actions.onStart(device)}>
+              <Play />
+              Başlat
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              aria-label="Bakıma al"
+              title="Bakıma al"
+              onClick={() => actions.onMaintenance(device, "start")}
+            >
+              <Wrench />
+            </Button>
+          </div>
         ) : null}
       </div>
     </article>

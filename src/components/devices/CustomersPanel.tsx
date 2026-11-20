@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Search, UserPlus, Wallet } from "lucide-react";
+import { BadgeCheck, Loader2, Search, UserPlus, Wallet } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -13,21 +13,29 @@ import {
   createDeviceCustomer,
   deviceQueryKeys,
   getDeviceCustomer,
+  listDeviceCustomerMemberships,
+  listDeviceMembershipPlans,
   searchDeviceCustomers,
+  sellDeviceMembership,
   topUpDeviceCustomer,
 } from "@/lib/device-api";
 import {
+  deviceTypeLabel,
   formatDeviceMoney,
+  formatIstanbulDateTime,
   formatMinutes,
   PAYMENT_METHOD_LABEL,
+  toAmount,
   type DeviceCustomer,
   type DevicePaymentMethod,
 } from "@/lib/device-rental";
+import { cn } from "@/lib/utils";
 
 import { ChoiceButton, ErrorText, useDebounced } from "./device-ui";
 
 type TopUpMethod = Exclude<DevicePaymentMethod, "BALANCE">;
 const TOP_UP_METHODS: TopUpMethod[] = ["CASH", "CARD", "TRANSFER"];
+const SALE_METHODS: DevicePaymentMethod[] = ["CASH", "CARD", "TRANSFER", "BALANCE"];
 
 export function CustomersPanel() {
   const [term, setTerm] = useState("");
@@ -76,13 +84,23 @@ export function CustomersPanel() {
                 onClick={() => setSelectedId(customer.id)}
               >
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold">{customer.name}</p>
+                  <p className="flex min-w-0 items-center gap-1.5 text-sm font-semibold">
+                    <span className="truncate">{customer.name}</span>
+                    {customer.tierName ? (
+                      <span className="shrink-0 rounded-full bg-primary/10 px-1.5 text-[10px] font-semibold text-primary">
+                        {customer.tierName}
+                      </span>
+                    ) : null}
+                  </p>
                   <p className="truncate text-xs text-muted-foreground">{customer.phone || "Telefon yok"}</p>
                 </div>
                 <div className="text-right text-xs">
                   <p className="font-semibold tabular-nums">{formatDeviceMoney(customer.balance)}</p>
                   {customer.freeMinutes > 0 ? (
                     <p className="text-emerald-700">{formatMinutes(customer.freeMinutes)} ücretsiz</p>
+                  ) : null}
+                  {(customer.membershipMinutes ?? 0) > 0 ? (
+                    <p className="text-sky-700">{formatMinutes(customer.membershipMinutes)} üyelik</p>
                   ) : null}
                 </div>
               </button>
@@ -240,6 +258,17 @@ function CustomerDetail({ customerId }: { customerId: number }) {
         <Stat label="Ücretsiz dakika" value={formatMinutes(customer.freeMinutes)} />
         <Stat label="Toplam oyun" value={formatMinutes(customer.totalMinutes)} />
         <Stat label="Toplam harcama" value={formatDeviceMoney(customer.totalSpent)} />
+        {customer.bonusBalance != null ? <Stat label="Bonus bakiye" value={formatDeviceMoney(customer.bonusBalance)} /> : null}
+        {customer.membershipMinutes != null ? (
+          <Stat label="Üyelik dakikası" value={formatMinutes(customer.membershipMinutes)} />
+        ) : null}
+        {customer.tierName ? (
+          <Stat
+            label="Seviye"
+            value={`${customer.tierName}${toAmount(customer.tierDiscountPercent) > 0 ? ` · %${toAmount(customer.tierDiscountPercent)}` : ""}`}
+          />
+        ) : null}
+        {customer.referralCode ? <Stat label="Davet kodu" value={customer.referralCode} /> : null}
       </div>
 
       <section className="space-y-3 border-t border-border pt-4">
@@ -272,6 +301,137 @@ function CustomerDetail({ customerId }: { customerId: number }) {
           Bakiye yükle
         </Button>
       </section>
+
+      <MembershipSection customerId={customerId} />
     </div>
+  );
+}
+
+function MembershipSection({ customerId }: { customerId: number }) {
+  const queryClient = useQueryClient();
+  const [planId, setPlanId] = useState<number | null>(null);
+  const [method, setMethod] = useState<DevicePaymentMethod>("CASH");
+  const [done, setDone] = useState<string | null>(null);
+
+  const plansQuery = useQuery({
+    queryKey: deviceQueryKeys.plans,
+    queryFn: listDeviceMembershipPlans,
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+  const membershipsQuery = useQuery({
+    queryKey: deviceQueryKeys.memberships(customerId),
+    queryFn: () => listDeviceCustomerMemberships(customerId),
+    retry: false,
+  });
+
+  const plans = (plansQuery.data ?? []).filter((plan) => plan.active !== false);
+  const plan = plans.find((item) => item.id === planId) ?? null;
+  const memberships = membershipsQuery.data ?? [];
+
+  const sell = useMutation({
+    mutationFn: () => sellDeviceMembership(customerId, { planId: planId!, paymentMethod: method }),
+    onSuccess: (membership) => {
+      setDone(`${membership.planName ?? plan?.name ?? "Üyelik"} satıldı (${PAYMENT_METHOD_LABEL[method]}).`);
+      setPlanId(null);
+      void queryClient.invalidateQueries({ queryKey: deviceQueryKeys.memberships(customerId) });
+      void queryClient.invalidateQueries({ queryKey: deviceQueryKeys.customer(customerId) });
+      void queryClient.invalidateQueries({ queryKey: ["staff-devices", "customers"] });
+    },
+  });
+
+  // Hide the section on a backend without memberships (endpoint missing) and when nothing is on sale or owned.
+  if (plansQuery.isError && membershipsQuery.isError) return null;
+  if (!plansQuery.isLoading && !membershipsQuery.isLoading && plans.length === 0 && memberships.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="space-y-3 border-t border-border pt-4">
+      <h3 className="flex items-center gap-2 text-sm font-semibold">
+        <BadgeCheck className="h-4 w-4" /> Üyelikler
+      </h3>
+
+      <ErrorText error={membershipsQuery.error} />
+      {memberships.length > 0 ? (
+        <ul className="space-y-2">
+          {memberships.map((item) => (
+            <li
+              key={item.id}
+              className={cn(
+                "rounded-xl border border-border p-3 text-sm",
+                item.usable === false && "bg-muted/40 text-muted-foreground",
+              )}
+            >
+              <p className="flex items-center justify-between gap-2">
+                <span className="truncate font-medium">{item.planName ?? "Üyelik"}</span>
+                <span className="shrink-0 text-xs tabular-nums">
+                  {formatMinutes(item.minutesLeft)} / {formatMinutes(item.minutesTotal)}
+                </span>
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {item.deviceType ? `${deviceTypeLabel(item.deviceType)} · ` : ""}
+                {item.endsAt ? `Bitiş ${formatIstanbulDateTime(item.endsAt)}` : ""}
+                {item.cancelled ? " · İptal" : item.usable === false ? " · Kullanılamaz" : ""}
+              </p>
+            </li>
+          ))}
+        </ul>
+      ) : membershipsQuery.isLoading ? null : (
+        <p className="text-xs text-muted-foreground">Üyeliği yok.</p>
+      )}
+
+      {plans.length > 0 ? (
+        <div className="space-y-2">
+          <Label>Üyelik sat</Label>
+          <div className="grid gap-2">
+            {plans.map((item) => (
+              <ChoiceButton
+                key={item.id}
+                className="text-left"
+                active={planId === item.id}
+                onClick={() => setPlanId(planId === item.id ? null : item.id)}
+              >
+                <span className="flex items-center justify-between gap-2">
+                  <span className="truncate">{item.name}</span>
+                  <span className="shrink-0 tabular-nums">{formatDeviceMoney(item.price)}</span>
+                </span>
+                <span className="block text-[11px] font-normal">
+                  {formatMinutes(item.minutes)} · {item.periodDays} gün
+                  {item.deviceType ? ` · ${deviceTypeLabel(item.deviceType)}` : ""}
+                </span>
+              </ChoiceButton>
+            ))}
+          </div>
+          {plan ? (
+            <>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {SALE_METHODS.map((item) => (
+                  <ChoiceButton key={item} active={method === item} onClick={() => setMethod(item)}>
+                    {PAYMENT_METHOD_LABEL[item]}
+                  </ChoiceButton>
+                ))}
+              </div>
+              <ErrorText error={sell.error} />
+              <Button
+                type="button"
+                className="w-full"
+                disabled={sell.isPending}
+                onClick={() => {
+                  setDone(null);
+                  sell.mutate();
+                }}
+              >
+                {sell.isPending ? <Loader2 className="animate-spin" /> : <BadgeCheck />}
+                {plan.name} sat · {formatDeviceMoney(plan.price)}
+              </Button>
+            </>
+          ) : null}
+        </div>
+      ) : (
+        <ErrorText error={plansQuery.error} />
+      )}
+      {done ? <p className="text-sm text-emerald-700">{done}</p> : null}
+    </section>
   );
 }

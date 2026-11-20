@@ -46,6 +46,40 @@ export type Device = {
   effectiveMultiHourlyRate?: Decimal;
   busy: boolean;
   nextReservation?: DeviceReservation | null;
+  publicToken?: string | null;
+  maintenance?: boolean | null;
+  maintenanceNote?: string | null;
+  maintenanceSince?: string | null;
+  /** Games installed on this device. */
+  games?: DeviceGameRef[] | null;
+};
+
+export type DeviceGameRef = { id: number; name: string };
+
+export type DeviceGame = {
+  id: number;
+  branchId?: number | null;
+  name: string;
+  genre?: string | null;
+  maxPlayers?: number | null;
+  consoleIds?: number[] | null;
+};
+
+export type DevicePackage = {
+  id: number;
+  branchId?: number | null;
+  name: string;
+  /** null: any device type. */
+  deviceType?: DeviceType | null;
+  minutes: number;
+  price?: Decimal;
+  /** ISO weekdays 1 (Mon) … 7 (Sun); empty/null: every day. */
+  days?: number[] | null;
+  /** "HH:mm[:ss]" */
+  startTime?: string | null;
+  endTime?: string | null;
+  active?: boolean;
+  availableNow?: boolean;
 };
 
 export type DeviceSessionItem = {
@@ -96,6 +130,18 @@ export type DeviceSession = {
   reservationId?: number | null;
   items?: DeviceSessionItem[] | null;
   segments?: DeviceSessionSegment[] | null;
+  packageId?: number | null;
+  packageName?: string | null;
+  packageMinutes?: number | null;
+  packagePrice?: Decimal;
+  gameId?: number | null;
+  gameName?: string | null;
+  membershipMinutesUsed?: number | null;
+  tierDiscountAmount?: Decimal;
+  bonusUsed?: Decimal;
+  /** Minutes asked for from the device's QR page; null when nothing is pending. */
+  extensionRequestMinutes?: number | null;
+  extensionRequestedAt?: string | null;
 };
 
 export type DeviceSessionQuote = {
@@ -111,6 +157,30 @@ export type DeviceSessionQuote = {
   loyaltyMinutesAvailable: number;
   loyaltyMinutesUsable: number;
   loyaltyValue?: Decimal;
+  packageName?: string | null;
+  membershipMinutesAvailable?: number;
+  membershipMinutesUsed?: number;
+  membershipValue?: Decimal;
+  tierName?: string | null;
+  tierDiscountPercent?: Decimal;
+  tierDiscountAmount?: Decimal;
+  bonusBalance?: Decimal;
+  bonusUsed?: Decimal;
+  manualDiscount?: Decimal;
+  loyaltyMinutesUsed?: number;
+  loyaltyDiscount?: Decimal;
+  totalDiscount?: Decimal;
+  /** Final amount with the asked options; missing on an older backend. */
+  amount?: Decimal;
+};
+
+/** Options the quote and finish calls share. */
+export type DeviceQuoteOptions = {
+  useLoyaltyMinutes?: boolean;
+  useMembershipMinutes?: boolean;
+  useBonusBalance?: boolean;
+  discountAmount?: number;
+  discountPercent?: number;
 };
 
 export type DeviceProductOption = {
@@ -131,6 +201,116 @@ export type DeviceCustomer = {
   loyaltyProgressMinutes?: number;
   totalMinutes?: number;
   totalSpent?: Decimal;
+  /** Gift / referral money, spent as a discount. */
+  bonusBalance?: Decimal;
+  referralCode?: string | null;
+  referredById?: number | null;
+  visits?: number;
+  lastVisitAt?: string | null;
+  tierName?: string | null;
+  tierDiscountPercent?: Decimal;
+  /** Minutes left on usable memberships. */
+  membershipMinutes?: number;
+};
+
+export type DeviceMembershipPlan = {
+  id: number;
+  name: string;
+  price?: Decimal;
+  minutes: number;
+  periodDays: number;
+  deviceType?: DeviceType | null;
+  active?: boolean;
+};
+
+export type DeviceMembership = {
+  id: number;
+  customerId?: number | null;
+  planId?: number | null;
+  planName?: string | null;
+  deviceType?: DeviceType | null;
+  minutesTotal: number;
+  minutesLeft: number;
+  price?: Decimal;
+  paymentMethod?: DevicePaymentMethod | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  cancelled?: boolean;
+  usable?: boolean;
+};
+
+export type DevicePaymentTotal = {
+  paymentMethod?: DevicePaymentMethod | null;
+  count: number;
+  amount?: Decimal;
+};
+
+export type DeviceShift = {
+  id: number;
+  branchId?: number | null;
+  staffId?: number | null;
+  staffName?: string | null;
+  openedAt?: string | null;
+  closedAt?: string | null;
+  openingCash?: Decimal;
+  sessions?: number;
+  sessionsTotal?: Decimal;
+  sessionPayments?: DevicePaymentTotal[] | null;
+  topUps?: DevicePaymentTotal[] | null;
+  memberships?: DevicePaymentTotal[] | null;
+  tournamentFees?: DevicePaymentTotal[] | null;
+  cashIn?: Decimal;
+  expectedCash?: Decimal;
+  countedCash?: Decimal;
+  difference?: Decimal;
+  note?: string | null;
+};
+
+export type DeviceTournamentStatus = "REGISTRATION" | "RUNNING" | "FINISHED" | "CANCELLED";
+
+export type DeviceTournamentPlayer = {
+  id: number;
+  customerId?: number | null;
+  name: string;
+  phone?: string | null;
+  paid?: boolean;
+  paymentMethod?: DevicePaymentMethod | null;
+  paidAt?: string | null;
+};
+
+export type DeviceTournamentMatch = {
+  id: number;
+  round: number;
+  position: number;
+  player1Id?: number | null;
+  player1Name?: string | null;
+  player2Id?: number | null;
+  player2Name?: string | null;
+  winnerId?: number | null;
+  score?: string | null;
+  /** Both players known, no winner yet. */
+  ready?: boolean;
+};
+
+export type DeviceTournament = {
+  id: number;
+  branchId?: number | null;
+  name: string;
+  gameName?: string | null;
+  startsAt?: string | null;
+  entryFee?: Decimal;
+  prizeNote?: string | null;
+  maxPlayers: number;
+  status: DeviceTournamentStatus;
+  winnerPlayerId?: number | null;
+  winnerName?: string | null;
+  playerCount?: number;
+  paidCount?: number;
+  collected?: Decimal;
+  /** Number of rounds; the last is the final. */
+  rounds?: number;
+  players?: DeviceTournamentPlayer[] | null;
+  matches?: DeviceTournamentMatch[] | null;
 };
 
 export type DevicePage<T> = {
@@ -177,6 +357,13 @@ export const RESERVATION_STATUS_LABEL: Record<DeviceReservationStatus, string> =
   STARTED: "Başladı",
   CANCELLED: "İptal",
   NO_SHOW: "Gelmedi",
+};
+
+export const TOURNAMENT_STATUS_LABEL: Record<DeviceTournamentStatus, string> = {
+  REGISTRATION: "Kayıt açık",
+  RUNNING: "Devam ediyor",
+  FINISHED: "Bitti",
+  CANCELLED: "İptal",
 };
 
 /* ── Money ── */
@@ -328,4 +515,100 @@ export function previewFinalAmount(input: {
   const cut =
     input.discountMode === "percent" ? (afterLoyalty * Math.min(discount, 100)) / 100 : Math.min(discount, afterLoyalty);
   return Math.round((afterLoyalty - cut) * 100) / 100;
+}
+
+/* ── Packages and games ── */
+
+/** Packages that can run on a device of this type (same type, or no type). Available-now ones first. */
+export function packagesForDevice(packages: DevicePackage[], type?: DeviceType | null): DevicePackage[] {
+  const t = type ?? "PLAYSTATION";
+  return packages
+    .filter((p) => p.active !== false && (p.deviceType == null || p.deviceType === t))
+    .sort((a, b) => Number(b.availableNow !== false) - Number(a.availableNow !== false) || a.minutes - b.minutes);
+}
+
+/** "HH:mm" from "HH:mm[:ss]". */
+export function shortTime(value: string | null | undefined): string {
+  if (!value) return "";
+  const match = /^(\d{1,2}):(\d{2})/.exec(value.trim());
+  return match ? `${match[1]!.padStart(2, "0")}:${match[2]}` : value;
+}
+
+const WEEKDAY_SHORT = ["", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
+
+/** "Pzt, Sal · 10:00–14:00", or "" when the package is valid any time. */
+export function packageWindowLabel(p: Pick<DevicePackage, "days" | "startTime" | "endTime">): string {
+  const days = (p.days ?? []).filter((d) => d >= 1 && d <= 7);
+  const dayText = days.length > 0 && days.length < 7 ? [...days].sort((a, b) => a - b).map((d) => WEEKDAY_SHORT[d]).join(", ") : "";
+  const timeText = p.startTime && p.endTime ? `${shortTime(p.startTime)}–${shortTime(p.endTime)}` : "";
+  return [dayText, timeText].filter(Boolean).join(" · ");
+}
+
+/** Splits the branch's games into those installed on the device and the rest, each sorted by name. */
+export function splitGamesForDevice(
+  games: DeviceGame[],
+  device: Pick<Device, "id" | "games">,
+): { installed: DeviceGame[]; others: DeviceGame[] } {
+  const ids = new Set((device.games ?? []).map((g) => g.id));
+  const byName = (a: DeviceGame, b: DeviceGame) => a.name.localeCompare(b.name, "tr-TR", { sensitivity: "base" });
+  const installed: DeviceGame[] = [];
+  const others: DeviceGame[] = [];
+  for (const game of games) {
+    if (ids.has(game.id) || (game.consoleIds ?? []).includes(device.id)) installed.push(game);
+    else others.push(game);
+  }
+  return { installed: installed.sort(byName), others: others.sort(byName) };
+}
+
+/* ── Shifts ── */
+
+export function sumPaymentTotals(rows: DevicePaymentTotal[] | null | undefined): { count: number; amount: number } {
+  let count = 0;
+  let amount = 0;
+  for (const row of rows ?? []) {
+    count += row.count ?? 0;
+    amount += toAmount(row.amount);
+  }
+  return { count, amount: Math.round(amount * 100) / 100 };
+}
+
+/** Counted minus expected cash (positive: surplus, negative: shortfall). */
+export function cashDifference(counted: number, expected: Decimal): number {
+  return Math.round((counted - toAmount(expected)) * 100) / 100;
+}
+
+/* ── Tournaments ── */
+
+/** "Final", "Yarı final", "Çeyrek final", else "N. tur". */
+export function roundLabel(round: number, rounds: number): string {
+  if (rounds > 0) {
+    if (round === rounds) return "Final";
+    if (round === rounds - 1) return "Yarı final";
+    if (round === rounds - 2) return "Çeyrek final";
+  }
+  return `${round}. tur`;
+}
+
+/** Matches grouped by round (ascending), each round sorted by position. */
+export function groupMatchesByRound(
+  matches: DeviceTournamentMatch[] | null | undefined,
+): { round: number; matches: DeviceTournamentMatch[] }[] {
+  const map = new Map<number, DeviceTournamentMatch[]>();
+  for (const match of matches ?? []) {
+    const list = map.get(match.round) ?? [];
+    list.push(match);
+    map.set(match.round, list);
+  }
+  return [...map.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([round, list]) => ({ round, matches: list.sort((a, b) => a.position - b.position) }));
+}
+
+/** "Kasa tutuyor", "Fazla 12,50 ₺" or "Eksik 12,50 ₺". */
+export function cashDifferenceLabel(difference: Decimal): { label: string; tone: "ok" | "over" | "short" } {
+  const d = Math.round(toAmount(difference) * 100) / 100;
+  if (d === 0) return { label: "Kasa tutuyor", tone: "ok" };
+  return d > 0
+    ? { label: `Fazla ${formatDeviceMoney(d)}`, tone: "over" }
+    : { label: `Eksik ${formatDeviceMoney(-d)}`, tone: "short" };
 }

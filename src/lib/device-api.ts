@@ -8,12 +8,19 @@ import { getJsonErrorText } from "@/lib/api-error-text";
 import type {
   Device,
   DeviceCustomer,
+  DeviceGame,
+  DeviceMembership,
+  DeviceMembershipPlan,
+  DevicePackage,
   DevicePage,
   DevicePaymentMethod,
   DeviceProductOption,
   DeviceReservation,
   DeviceSession,
+  DeviceQuoteOptions,
   DeviceSessionQuote,
+  DeviceShift,
+  DeviceTournament,
 } from "@/lib/device-rental";
 import { parseJson, waiterFetch, WaiterApiError } from "@/lib/waiter-api";
 
@@ -124,6 +131,8 @@ export type StartDeviceSessionPayload = {
   customerId?: number;
   plannedMinutes?: number;
   controllerCount?: number;
+  packageId?: number;
+  gameId?: number;
 };
 
 export function startDeviceSession(consoleId: number, payload: StartDeviceSessionPayload): Promise<DeviceSession> {
@@ -161,16 +170,48 @@ export function removeDeviceSessionItem(sessionId: number, itemId: number): Prom
   return request("DELETE", `/sessions/${sessionId}/items/${itemId}`, "Ürün silinemedi");
 }
 
-export function quoteDeviceSession(sessionId: number): Promise<DeviceSessionQuote> {
-  return request("GET", `/sessions/${sessionId}/quote`, "Hesap alınamadı");
+export function quoteDeviceSession(sessionId: number, options: DeviceQuoteOptions = {}): Promise<DeviceSessionQuote> {
+  const params = query({
+    useLoyaltyMinutes: options.useLoyaltyMinutes ? "true" : undefined,
+    useMembershipMinutes: options.useMembershipMinutes ? "true" : undefined,
+    useBonusBalance: options.useBonusBalance ? "true" : undefined,
+    discountAmount: options.discountAmount,
+    discountPercent: options.discountPercent,
+  });
+  return request("GET", `/sessions/${sessionId}/quote${params}`, "Hesap alınamadı");
 }
 
-export type FinishDeviceSessionPayload = {
+export type FinishDeviceSessionPayload = DeviceQuoteOptions & {
   paymentMethod: DevicePaymentMethod;
-  discountAmount?: number;
-  discountPercent?: number;
-  useLoyaltyMinutes?: boolean;
 };
+
+/** Approves the minutes asked for from the device's QR page (adds them to the plan). */
+export function approveDeviceExtension(sessionId: number): Promise<DeviceSession> {
+  return request("POST", `/sessions/${sessionId}/extension-request/approve`, "Süre isteği onaylanamadı");
+}
+
+export function dismissDeviceExtension(sessionId: number): Promise<DeviceSession> {
+  return request("POST", `/sessions/${sessionId}/extension-request/dismiss`, "Süre isteği reddedilemedi");
+}
+
+/* ── Catalog: games, packages, maintenance ── */
+
+export async function listDeviceGames(): Promise<DeviceGame[]> {
+  return list<DeviceGame>(await request("GET", "/games", "Oyunlar alınamadı"));
+}
+
+/** Active packages of the branch, with `availableNow`. */
+export async function listDevicePackages(): Promise<DevicePackage[]> {
+  return list<DevicePackage>(await request("GET", "/packages", "Paketler alınamadı"));
+}
+
+export function startDeviceMaintenance(consoleId: number, payload: { note?: string } = {}): Promise<Device> {
+  return request("POST", `/${consoleId}/maintenance`, "Cihaz bakıma alınamadı", payload);
+}
+
+export function endDeviceMaintenance(consoleId: number, payload: { cost?: number; note?: string } = {}): Promise<Device> {
+  return request("POST", `/${consoleId}/maintenance/end`, "Bakım bitirilemedi", payload);
+}
 
 export function finishDeviceSession(sessionId: number, payload: FinishDeviceSessionPayload): Promise<DeviceSession> {
   return request("POST", `/sessions/${sessionId}/finish`, "Oturum bitirilemedi", payload);
@@ -197,6 +238,93 @@ export function topUpDeviceCustomer(
   payload: { amount: number; paymentMethod: Exclude<DevicePaymentMethod, "BALANCE">; note?: string },
 ): Promise<DeviceCustomer> {
   return request("POST", `/customers/${customerId}/top-up`, "Bakiye yüklenemedi", payload);
+}
+
+/* ── Memberships ── */
+
+export async function listDeviceMembershipPlans(): Promise<DeviceMembershipPlan[]> {
+  return list<DeviceMembershipPlan>(await request("GET", "/membership-plans", "Üyelik planları alınamadı"));
+}
+
+export async function listDeviceCustomerMemberships(customerId: number): Promise<DeviceMembership[]> {
+  return list<DeviceMembership>(await request("GET", `/customers/${customerId}/memberships`, "Üyelikler alınamadı"));
+}
+
+export function sellDeviceMembership(
+  customerId: number,
+  payload: { planId: number; paymentMethod: DevicePaymentMethod },
+): Promise<DeviceMembership> {
+  return request("POST", `/customers/${customerId}/memberships`, "Üyelik satılamadı", payload);
+}
+
+/* ── Shifts ── */
+
+/** The caller's open shift, or null (204). */
+export async function getCurrentDeviceShift(): Promise<DeviceShift | null> {
+  const data = await request<DeviceShift | Record<string, never>>("GET", "/shifts/current", "Vardiya alınamadı");
+  return data && typeof data === "object" && "id" in data && data.id != null ? (data as DeviceShift) : null;
+}
+
+export function openDeviceShift(payload: { openingCash?: number }): Promise<DeviceShift> {
+  return request("POST", "/shifts", "Vardiya açılamadı", payload);
+}
+
+export function closeDeviceShift(shiftId: number, payload: { countedCash: number; note?: string }): Promise<DeviceShift> {
+  return request("POST", `/shifts/${shiftId}/close`, "Vardiya kapatılamadı", payload);
+}
+
+/** Staff see only their own shifts. */
+export async function listDeviceShifts(pageIndex = 0, size = 20): Promise<DevicePage<DeviceShift>> {
+  return page<DeviceShift>(await request("GET", `/shifts${query({ page: pageIndex, size })}`, "Vardiyalar alınamadı"));
+}
+
+/* ── Tournaments (staff run them; the owner creates them) ── */
+
+export async function listDeviceTournaments(): Promise<DeviceTournament[]> {
+  return list<DeviceTournament>(await request("GET", "/tournaments", "Turnuvalar alınamadı"));
+}
+
+export function getDeviceTournament(tournamentId: number): Promise<DeviceTournament> {
+  return request("GET", `/tournaments/${tournamentId}`, "Turnuva alınamadı");
+}
+
+export type AddTournamentPlayerPayload = {
+  customerId?: number;
+  name?: string;
+  phone?: string;
+  /** Set when the entry fee is taken at sign-up. */
+  paymentMethod?: DevicePaymentMethod;
+};
+
+export function addDeviceTournamentPlayer(
+  tournamentId: number,
+  payload: AddTournamentPlayerPayload,
+): Promise<DeviceTournament> {
+  return request("POST", `/tournaments/${tournamentId}/players`, "Oyuncu eklenemedi", payload);
+}
+
+export function removeDeviceTournamentPlayer(tournamentId: number, playerId: number): Promise<DeviceTournament> {
+  return request("DELETE", `/tournaments/${tournamentId}/players/${playerId}`, "Oyuncu çıkarılamadı");
+}
+
+export function payDeviceTournamentPlayer(
+  tournamentId: number,
+  playerId: number,
+  paymentMethod: DevicePaymentMethod,
+): Promise<DeviceTournament> {
+  return request("POST", `/tournaments/${tournamentId}/players/${playerId}/pay`, "Ücret alınamadı", { paymentMethod });
+}
+
+export function startDeviceTournament(tournamentId: number): Promise<DeviceTournament> {
+  return request("POST", `/tournaments/${tournamentId}/start`, "Turnuva başlatılamadı");
+}
+
+export function reportDeviceTournamentMatch(
+  tournamentId: number,
+  matchId: number,
+  payload: { winnerPlayerId: number; score?: string },
+): Promise<DeviceTournament> {
+  return request("POST", `/tournaments/${tournamentId}/matches/${matchId}/result`, "Sonuç kaydedilemedi", payload);
 }
 
 /* ── Reservations ── */
@@ -239,11 +367,14 @@ export function startDeviceReservation(reservationId: number, controllerCount?: 
   );
 }
 
-/** Refetches devices, sessions, history, reservations and customers; leaves product lists and open quotes alone. */
+/** Catalog lists that do not change with day-to-day operations. */
+const STATIC_KEYS = new Set<unknown>(["quote", "products", "games", "packages", "plans"]);
+
+/** Refetches devices, sessions, history, reservations, customers and shifts; leaves catalogs and open quotes alone. */
 export function invalidateDeviceData(queryClient: QueryClient): Promise<void> {
   return queryClient.invalidateQueries({
     queryKey: ["staff-devices"],
-    predicate: (q) => q.queryKey[1] !== "quote" && q.queryKey[1] !== "products",
+    predicate: (q) => !STATIC_KEYS.has(q.queryKey[1]),
   });
 }
 
@@ -257,5 +388,13 @@ export const deviceQueryKeys = {
   customers: (q: string) => ["staff-devices", "customers", q] as const,
   customer: (id: number) => ["staff-devices", "customer", id] as const,
   reservations: (from: string, to: string) => ["staff-devices", "reservations", from, to] as const,
-  quote: (sessionId: number) => ["staff-devices", "quote", sessionId] as const,
+  quote: (sessionId: number, optionsKey = "") => ["staff-devices", "quote", sessionId, optionsKey] as const,
+  games: ["staff-devices", "games"] as const,
+  packages: ["staff-devices", "packages"] as const,
+  plans: ["staff-devices", "plans"] as const,
+  memberships: (customerId: number) => ["staff-devices", "memberships", customerId] as const,
+  currentShift: ["staff-devices", "shift", "current"] as const,
+  shifts: (pageIndex: number) => ["staff-devices", "shifts", pageIndex] as const,
+  tournaments: ["staff-devices", "tournaments"] as const,
+  tournament: (id: number) => ["staff-devices", "tournament", id] as const,
 };

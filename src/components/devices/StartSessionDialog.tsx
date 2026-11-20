@@ -1,22 +1,28 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { Loader2, Play } from "lucide-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { Loader2, Package, Play } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { startDeviceSession } from "@/lib/device-api";
+import { deviceQueryKeys, listDeviceGames, listDevicePackages, startDeviceSession } from "@/lib/device-api";
 import {
   deviceTypeLabel,
   deviceUsesControllers,
   formatDeviceMoney,
+  formatMinutes,
+  packagesForDevice,
+  packageWindowLabel,
+  splitGamesForDevice,
   type Device,
   type DeviceCustomer,
+  type DevicePackage,
 } from "@/lib/device-rental";
+import { cn } from "@/lib/utils";
 
 import { CustomerPicker } from "./CustomerPicker";
 import { ChoiceButton, ControllerToggle, ErrorText } from "./device-ui";
@@ -56,7 +62,36 @@ function StartSessionForm({ device, onStarted }: { device: Device; onStarted: ()
   const [preset, setPreset] = useState<PlanPreset>("free");
   const [customMinutes, setCustomMinutes] = useState("");
   const [controllers, setControllers] = useState(2);
+  const [pkg, setPkg] = useState<DevicePackage | null>(null);
+  const [gameId, setGameId] = useState("");
   const usesControllers = deviceUsesControllers(device.deviceType);
+
+  // Optional extras: an older backend without these endpoints just hides the sections.
+  const packagesQuery = useQuery({
+    queryKey: deviceQueryKeys.packages,
+    queryFn: listDevicePackages,
+    retry: false,
+    staleTime: 60_000,
+  });
+  const gamesQuery = useQuery({
+    queryKey: deviceQueryKeys.games,
+    queryFn: listDeviceGames,
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+  const packages = packagesForDevice(packagesQuery.data ?? [], device.deviceType);
+  const games = splitGamesForDevice(gamesQuery.data ?? [], device);
+
+  const choosePackage = (next: DevicePackage | null) => {
+    setPkg(next);
+    if (next) {
+      setPreset("custom");
+      setCustomMinutes(String(next.minutes));
+    } else {
+      setPreset("free");
+      setCustomMinutes("");
+    }
+  };
 
   const plannedMinutes =
     preset === "free"
@@ -74,6 +109,8 @@ function StartSessionForm({ device, onStarted }: { device: Device; onStarted: ()
         note: note.trim() || undefined,
         plannedMinutes,
         controllerCount: usesControllers ? controllers : undefined,
+        packageId: pkg?.id,
+        gameId: gameId ? Number(gameId) : undefined,
       }),
     onSuccess: onStarted,
   });
@@ -103,6 +140,78 @@ function StartSessionForm({ device, onStarted }: { device: Device; onStarted: ()
         <Textarea id="device-start-note" rows={2} value={note} onChange={(event) => setNote(event.target.value)} />
       </div>
 
+      {packages.length > 0 ? (
+        <div className="space-y-1.5">
+          <Label>Paket</Label>
+          <div className="grid gap-2">
+            <ChoiceButton className="text-left" active={pkg == null} onClick={() => choosePackage(null)}>
+              Paketsiz (saatlik)
+            </ChoiceButton>
+            {packages.map((item) => {
+              const available = item.availableNow !== false;
+              const window = packageWindowLabel(item);
+              return (
+                <ChoiceButton
+                  key={item.id}
+                  className="text-left"
+                  active={pkg?.id === item.id}
+                  disabled={!available}
+                  onClick={() => choosePackage(item)}
+                >
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <Package className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">{item.name}</span>
+                    </span>
+                    <span className="shrink-0 tabular-nums">
+                      {formatMinutes(item.minutes)} · {formatDeviceMoney(item.price)}
+                    </span>
+                  </span>
+                  {window || !available ? (
+                    <span className={cn("block text-[11px] font-normal", pkg?.id === item.id ? "" : "text-muted-foreground")}>
+                      {window}
+                      {!available ? `${window ? " · " : ""}Şu an geçerli değil` : ""}
+                    </span>
+                  ) : null}
+                </ChoiceButton>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
+      {games.installed.length + games.others.length > 0 ? (
+        <div className="space-y-1.5">
+          <Label htmlFor="device-start-game">Oyun</Label>
+          <select
+            id="device-start-game"
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:text-sm"
+            value={gameId}
+            onChange={(event) => setGameId(event.target.value)}
+          >
+            <option value="">Seçilmedi</option>
+            {games.installed.length > 0 ? (
+              <optgroup label="Bu cihazda yüklü">
+                {games.installed.map((game) => (
+                  <option key={game.id} value={game.id}>
+                    {game.name}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null}
+            {games.others.length > 0 ? (
+              <optgroup label={games.installed.length > 0 ? "Diğer oyunlar" : "Oyunlar"}>
+                {games.others.map((game) => (
+                  <option key={game.id} value={game.id}>
+                    {game.name}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null}
+          </select>
+        </div>
+      ) : null}
+
       <div className="space-y-1.5">
         <Label>Planlanan süre</Label>
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
@@ -130,6 +239,13 @@ function StartSessionForm({ device, onStarted }: { device: Device; onStarted: ()
           <Label>Kol sayısı</Label>
           <ControllerToggle value={controllers} onChange={setControllers} />
         </div>
+      ) : null}
+
+      {pkg ? (
+        <p className="rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+          Paket: {pkg.name} · {formatMinutes(pkg.minutes)} sabit {formatDeviceMoney(pkg.price)}. Süre aşılırsa fazlası
+          saatlik ücretlenir.
+        </p>
       ) : null}
 
       <ErrorText error={start.error} />

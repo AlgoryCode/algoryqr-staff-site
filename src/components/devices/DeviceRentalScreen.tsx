@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
+import { Button } from "@/components/ui/button";
 import { deviceQueryKeys, isDeviceRentalNotEnabledError, listDevices } from "@/lib/device-api";
 import { cn } from "@/lib/utils";
 
@@ -10,13 +11,17 @@ import { CustomersPanel } from "./CustomersPanel";
 import { DeviceGrid } from "./DeviceGrid";
 import { HistoryPanel } from "./HistoryPanel";
 import { ReservationsPanel } from "./ReservationsPanel";
+import { ShiftPanel, useCurrentShift } from "./ShiftPanel";
+import { TournamentsPanel } from "./TournamentsPanel";
 
-type DeviceTab = "devices" | "reservations" | "customers" | "history";
+type DeviceTab = "devices" | "reservations" | "customers" | "shift" | "tournaments" | "history";
 
 const TABS: { key: DeviceTab; label: string }[] = [
   { key: "devices", label: "Cihazlar" },
   { key: "reservations", label: "Rezervasyonlar" },
   { key: "customers", label: "Müşteriler" },
+  { key: "shift", label: "Vardiya" },
+  { key: "tournaments", label: "Turnuvalar" },
   { key: "history", label: "Son oturumlar" },
 ];
 
@@ -40,6 +45,10 @@ export function useDeviceRentalAccess(enabled: boolean): boolean {
 export function DeviceRentalScreen() {
   const [tab, setTab] = useState<DeviceTab>("devices");
   const probe = useQuery({ queryKey: deviceQueryKeys.devices, queryFn: listDevices, retry: false });
+  const enabled = probe.data != null;
+  const shiftQuery = useCurrentShift(enabled);
+  // Non-blocking nudge: only once we know for sure there is no open shift (an older backend errors → no nudge).
+  const noShift = enabled && shiftQuery.isSuccess && shiftQuery.data == null;
 
   if (isDeviceRentalNotEnabledError(probe.error)) {
     return (
@@ -77,9 +86,19 @@ export function DeviceRentalScreen() {
           </button>
         ))}
       </div>
+      {noShift && tab !== "shift" ? (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:bg-amber-950/30 dark:text-amber-100">
+          <span>Açık vardiyanız yok. Kasayı takip etmek için vardiya açın.</span>
+          <Button type="button" size="sm" variant="outline" className="shrink-0" onClick={() => setTab("shift")}>
+            Vardiya aç
+          </Button>
+        </div>
+      ) : null}
       {tab === "devices" ? <DeviceGrid /> : null}
       {tab === "reservations" ? <ReservationsPanel /> : null}
       {tab === "customers" ? <CustomersPanel /> : null}
+      {tab === "shift" ? <ShiftPanel /> : null}
+      {tab === "tournaments" ? <TournamentsPanel /> : null}
       {tab === "history" ? <HistoryPanel /> : null}
     </div>
   );

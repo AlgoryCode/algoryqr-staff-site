@@ -4,7 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  approveDeviceExtension,
   deviceQueryKeys,
+  dismissDeviceExtension,
   extendDeviceSession,
   invalidateDeviceData,
   listActiveDeviceSessions,
@@ -18,6 +20,7 @@ import { DeviceCard, type DeviceCardActions } from "./DeviceCard";
 import { ErrorText, playTimeUpBeep, useNow } from "./device-ui";
 import { FinishDialog } from "./FinishDialog";
 import { ItemsDialog } from "./ItemsDialog";
+import { MaintenanceDialog, type MaintenanceTarget } from "./MaintenanceDialog";
 import { StartSessionDialog } from "./StartSessionDialog";
 import { TransferDialog } from "./TransferDialog";
 
@@ -30,6 +33,7 @@ export function DeviceGrid() {
   const [transferring, setTransferring] = useState<DeviceSession | null>(null);
   const [itemsFor, setItemsFor] = useState<DeviceSession | null>(null);
   const [finishing, setFinishing] = useState<DeviceSession | null>(null);
+  const [maintenanceTarget, setMaintenanceTarget] = useState<MaintenanceTarget | null>(null);
 
   const devicesQuery = useQuery({
     queryKey: deviceQueryKeys.devices,
@@ -47,9 +51,15 @@ export function DeviceGrid() {
   const refresh = () => invalidateDeviceData(queryClient);
 
   const sessionAction = useMutation({
-    mutationFn: async (payload: { session: DeviceSession; kind: "pause" | "resume" | "extend"; minutes?: number }) => {
+    mutationFn: async (payload: {
+      session: DeviceSession;
+      kind: "pause" | "resume" | "extend" | "approve" | "dismiss";
+      minutes?: number;
+    }) => {
       if (payload.kind === "pause") return pauseDeviceSession(payload.session.id);
       if (payload.kind === "resume") return resumeDeviceSession(payload.session.id);
+      if (payload.kind === "approve") return approveDeviceExtension(payload.session.id);
+      if (payload.kind === "dismiss") return dismissDeviceExtension(payload.session.id);
       return extendDeviceSession(payload.session.id, payload.minutes ?? 15);
     },
     onSettled: () => void refresh(),
@@ -98,15 +108,28 @@ export function DeviceGrid() {
     onTransfer: setTransferring,
     onItems: setItemsFor,
     onFinish: setFinishing,
+    onMaintenance: (device, mode) => setMaintenanceTarget({ device, mode }),
+    onExtensionRequest: (session, approve) => sessionAction.mutate({ session, kind: approve ? "approve" : "dismiss" }),
   };
 
   const pendingSessionId = sessionAction.isPending ? sessionAction.variables?.session.id ?? null : null;
-  const freeCount = devices.filter((device) => !device.busy && !sessionsByDevice.has(device.id)).length;
+  const isOccupied = (device: Device) => device.busy || sessionsByDevice.has(device.id);
+  const maintenanceCount = devices.filter((device) => device.maintenance === true && !isOccupied(device)).length;
+  const freeCount = devices.filter((device) => !isOccupied(device) && device.maintenance !== true).length;
+  const busyCount = devices.length - freeCount - maintenanceCount;
+  const requestCount = (activeQuery.data ?? []).filter((session) => (session.extensionRequestMinutes ?? 0) > 0).length;
 
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        {devices.length > 0 ? `${freeCount} boş · ${devices.length - freeCount} dolu` : null}
+        {devices.length > 0
+          ? `${freeCount} boş · ${busyCount} dolu${maintenanceCount > 0 ? ` · ${maintenanceCount} bakımda` : ""}`
+          : null}
+        {requestCount > 0 ? (
+          <span className="ml-2 rounded-full bg-sky-600 px-2 py-0.5 text-[11px] font-semibold text-white">
+            {requestCount} süre isteği
+          </span>
+        ) : null}
       </p>
 
       <ErrorText error={devicesQuery.error ?? activeQuery.error ?? sessionAction.error} />
@@ -147,10 +170,18 @@ export function DeviceGrid() {
       />
       <TransferDialog
         session={transferring}
-        devices={devices.map((device) => ({ ...device, busy: device.busy || sessionsByDevice.has(device.id) }))}
+        devices={devices.map((device) => ({ ...device, busy: isOccupied(device) || device.maintenance === true }))}
         onOpenChange={(open) => !open && setTransferring(null)}
         onDone={() => {
           setTransferring(null);
+          void refresh();
+        }}
+      />
+      <MaintenanceDialog
+        target={maintenanceTarget}
+        onOpenChange={(open) => !open && setMaintenanceTarget(null)}
+        onDone={() => {
+          setMaintenanceTarget(null);
           void refresh();
         }}
       />
